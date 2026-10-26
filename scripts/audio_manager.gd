@@ -12,6 +12,12 @@ const SOUNDS := {
     "game_over": preload("res://assets/audio/game_over.wav"),
     "boss_spawn": preload("res://assets/audio/boss_spawn.wav"),
     "boss_die": preload("res://assets/audio/boss_die.wav"),
+    "turret": preload("res://assets/audio/turret.wav"),
+    "chain": preload("res://assets/audio/chain.wav"),
+    "pierce": preload("res://assets/audio/pierce.wav"),
+    "enemy_shot": preload("res://assets/audio/enemy_shot.wav"),
+    "explode": preload("res://assets/audio/explode.wav"),
+    "orbiter": preload("res://assets/audio/orbiter.wav"),
 }
 const POOL_SIZE := 12
 

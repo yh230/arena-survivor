@@ -1,6 +1,8 @@
 extends Node2D
 
 const ENEMY_SCENE := preload("res://scenes/enemy.tscn")
+const SHOOTER_SCENE := preload("res://scenes/shooter.tscn")
+const EXPLODER_SCENE := preload("res://scenes/exploder.tscn")
 const BOSS_SCENE := preload("res://scenes/boss.tscn")
 const TOTAL_WAVES := 10
 const WAVE_COUNTS := [8, 10, 12, 14, 16, 18, 20, 22, 24, 1]
@@ -9,7 +11,7 @@ const WAVE_HEALTH := [30, 38, 46, 54, 62, 70, 78, 86, 94, 0]
 const WAVE_CONTACT_DAMAGE := [8, 9, 10, 11, 12, 13, 14, 15, 16, 0]
 const WAVE_SPEED_MIN := [85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 0.0]
 const WAVE_SPEED_MAX := [120.0, 125.0, 130.0, 135.0, 140.0, 145.0, 150.0, 155.0, 160.0, 0.0]
-const BOSS_HEALTH := 900
+const BOSS_HEALTH := 1600
 const MAX_ENEMIES := 20
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
@@ -27,6 +29,7 @@ const UPGRADE_POOL := {
 @onready var projectiles: Node2D = $Projectiles
 @onready var hud = $HUD
 @onready var weapon_manager = $Player/WeaponManager
+@onready var camera: Camera2D = $Camera2D
 
 var wave := 1
 var wave_active := false
@@ -40,6 +43,9 @@ var best_wave := 0
 var test_mode := false
 var save_path := SAVE_PATH
 var pending_evolution_type := ""
+var forced_spawn_type := ""
+var shake_time := 0.0
+var shake_strength := 0.0
 
 func _ready() -> void:
     test_mode = OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--screenshot")
@@ -53,6 +59,7 @@ func _ready() -> void:
     hud.upgrade_selected.connect(_on_upgrade_selected)
     hud.evolution_selected.connect(_on_evolution_selected)
     hud.dash_requested.connect(player.try_dash)
+    Fx.shake_requested.connect(_on_shake_requested)
     _load_best_wave()
     hud.set_health(player.health, player.max_health)
     hud.set_best_wave(best_wave)
@@ -65,6 +72,7 @@ func _ready() -> void:
         call_deferred("_capture_screenshot")
 
 func _process(delta: float) -> void:
+    _update_shake(delta)
     if game_over or victory or choosing_upgrade or not wave_active:
         return
 
@@ -91,6 +99,11 @@ func _start_wave(number: int) -> void:
     wave = number
     wave_active = true
     choosing_upgrade = false
+    forced_spawn_type = ""
+    if wave == 3:
+        forced_spawn_type = "shooter"
+    elif wave == 5:
+        forced_spawn_type = "exploder"
     enemies_remaining_to_spawn = WAVE_COUNTS[wave - 1]
     spawn_timer = 0.35
     _record_wave(wave)
@@ -107,6 +120,12 @@ func _spawn_enemy() -> void:
         _spawn_boss()
         return
 
+    var enemy_type := forced_spawn_type
+    if enemy_type != "":
+        forced_spawn_type = ""
+    else:
+        enemy_type = _pick_enemy_type()
+
     var view_size := get_viewport_rect().size
     var spawn_position := Vector2.ZERO
     match randi() % 4:
@@ -119,12 +138,48 @@ func _spawn_enemy() -> void:
         _:
             spawn_position = Vector2(-32.0, randf_range(0.0, view_size.y))
 
-    var enemy := ENEMY_SCENE.instantiate()
-    enemy.max_health = WAVE_HEALTH[wave - 1]
-    enemy.contact_damage = WAVE_CONTACT_DAMAGE[wave - 1]
-    enemy.move_speed = randf_range(WAVE_SPEED_MIN[wave - 1], WAVE_SPEED_MAX[wave - 1])
+    var scene: PackedScene = ENEMY_SCENE
+    if enemy_type == "shooter":
+        scene = SHOOTER_SCENE
+    elif enemy_type == "exploder":
+        scene = EXPLODER_SCENE
+
+    var enemy = scene.instantiate()
+    if enemy_type == "shooter":
+        enemy.max_health = 22 + (wave - 1) * 4
+        enemy.contact_damage = 5
+        enemy.move_speed = randf_range(90.0, 110.0)
+        enemy.projectile_damage = 6 + wave
+    elif enemy_type == "exploder":
+        enemy.max_health = 30 + (wave - 1) * 6
+        enemy.move_speed = randf_range(65.0, 85.0)
+        enemy.explosion_damage = 20 + wave * 2
+    else:
+        enemy.max_health = WAVE_HEALTH[wave - 1]
+        enemy.contact_damage = WAVE_CONTACT_DAMAGE[wave - 1]
+        enemy.move_speed = randf_range(WAVE_SPEED_MIN[wave - 1], WAVE_SPEED_MAX[wave - 1])
     enemies.add_child(enemy)
     enemy.global_position = spawn_position
+
+func _pick_enemy_type() -> String:
+    if wave <= 2:
+        return "chaser"
+    var roll := randf()
+    if wave <= 4:
+        if roll < 0.25:
+            return "shooter"
+        return "chaser"
+    if wave <= 6:
+        if roll < 0.15:
+            return "exploder"
+        if roll < 0.40:
+            return "shooter"
+        return "chaser"
+    if roll < 0.25:
+        return "exploder"
+    if roll < 0.55:
+        return "shooter"
+    return "chaser"
 
 func _spawn_boss() -> void:
     var boss = BOSS_SCENE.instantiate()
@@ -143,6 +198,7 @@ func _on_boss_defeated() -> void:
 
 func _complete_wave() -> void:
     wave_active = false
+    Fx.clear_effects()
     if wave >= TOTAL_WAVES:
         victory = true
         weapon_manager.visible = false
@@ -193,6 +249,7 @@ func _on_player_died() -> void:
     game_over = true
     wave_active = false
     choosing_upgrade = false
+    Fx.clear_effects()
     for enemy in enemies.get_children():
         if enemy.has_method("stop"):
             enemy.stop()
@@ -202,6 +259,20 @@ func _on_player_died() -> void:
     hud.show_game_over(elapsed, wave, TOTAL_WAVES, best_wave)
     Audio.play("game_over", -4.0)
     get_tree().paused = true
+
+func _on_shake_requested(strength: float, duration: float) -> void:
+    shake_strength = maxf(shake_strength, strength)
+    shake_time = maxf(shake_time, duration)
+
+func _update_shake(delta: float) -> void:
+    if shake_time <= 0.0:
+        return
+    shake_time -= delta
+    if shake_time <= 0.0:
+        camera.offset = Vector2.ZERO
+        shake_strength = 0.0
+    else:
+        camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake_strength
 
 func _restart() -> void:
     get_tree().paused = false
@@ -380,6 +451,50 @@ func _run_smoke_test() -> void:
         return
 
     player.global_position = Vector2(640.0, 360.0)
+    player.health = player.max_health
+    player.health_changed.emit(player.health, player.max_health)
+    var shooter = SHOOTER_SCENE.instantiate()
+    shooter.max_health = 500
+    shooter.move_speed = 80.0
+    shooter.projectile_damage = 6
+    enemies.add_child(shooter)
+    shooter.global_position = Vector2(890.0, 360.0)
+    await get_tree().create_timer(3.5).timeout
+    if shooter.shots_fired <= 0:
+        _fail_smoke_test("shooter did not fire")
+        return
+    if player.health >= player.max_health:
+        _fail_smoke_test("shooter projectile did not hit player")
+        return
+    shooter.queue_free()
+    for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
+        if is_instance_valid(projectile):
+            projectile.queue_free()
+    await get_tree().process_frame
+
+    player.global_position = Vector2(640.0, 360.0)
+    player.health = player.max_health
+    player.health_changed.emit(player.health, player.max_health)
+    var exploder = EXPLODER_SCENE.instantiate()
+    exploder.max_health = 500
+    exploder.move_speed = 80.0
+    exploder.explosion_damage = 20
+    enemies.add_child(exploder)
+    exploder.global_position = Vector2(940.0, 360.0)
+    await get_tree().create_timer(4.5).timeout
+    if player.health >= player.max_health:
+        _fail_smoke_test("exploder did not damage player")
+        return
+    if is_instance_valid(exploder) and not exploder.is_queued_for_deletion():
+        exploder.queue_free()
+    for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
+        if is_instance_valid(projectile):
+            projectile.queue_free()
+    await get_tree().process_frame
+    player.health = player.max_health
+    player.health_changed.emit(player.health, player.max_health)
+
+    player.global_position = Vector2(640.0, 360.0)
     enemies_remaining_to_spawn = 0
     var test_enemy := ENEMY_SCENE.instantiate()
     enemies.add_child(test_enemy)
@@ -525,7 +640,7 @@ func _run_smoke_test() -> void:
 
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
     var final_build: String = weapon_manager.get_build_signature()
-    print("SMOKE_TEST_PASS input=%s dash=true waves=10 upgrades=%d evolutions=%d retries=%d build=%s boss=true victory=true death=true audio=true save_load=true" % [input_mode, upgrade_count, evolution_count, click_retries, final_build])
+    print("SMOKE_TEST_PASS input=%s dash=true enemies=true waves=10 upgrades=%d evolutions=%d retries=%d build=%s boss=true victory=true death=true audio=true save_load=true" % [input_mode, upgrade_count, evolution_count, click_retries, final_build])
     get_tree().quit(0)
 
 func _fail_smoke_test(reason: String) -> void:
@@ -546,6 +661,9 @@ func _force_clear_wave() -> void:
     enemies_remaining_to_spawn = 0
     for enemy in enemies.get_children():
         enemy.queue_free()
+    for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
+        if is_instance_valid(projectile):
+            projectile.queue_free()
 
 func _click_upgrade_choice(index: int, use_touch := false) -> void:
     var button: Button = hud.get_node("Root/UpgradePanel/Center/VBox/Choices/Choice%d" % (index + 1))
@@ -679,6 +797,23 @@ func _capture_screenshot() -> void:
     hud.close_upgrade_choices()
     get_tree().paused = false
     wave_active = false
+
+    _start_wave(7)
+    await get_tree().create_timer(0.5).timeout
+    var demo_shooter = SHOOTER_SCENE.instantiate()
+    demo_shooter.max_health = 2000
+    demo_shooter.move_speed = 80.0
+    enemies.add_child(demo_shooter)
+    demo_shooter.global_position = Vector2(380.0, 240.0)
+    var demo_exploder = EXPLODER_SCENE.instantiate()
+    demo_exploder.max_health = 2000
+    demo_exploder.move_speed = 70.0
+    enemies.add_child(demo_exploder)
+    demo_exploder.global_position = Vector2(900.0, 240.0)
+    await get_tree().create_timer(2.8).timeout
+    await RenderingServer.frame_post_draw
+    var fourth_error := _save_screenshot("res://screenshots/m4_enemies_screenshot.png")
+
     _start_wave(TOTAL_WAVES)
     await get_tree().create_timer(0.8).timeout
     var boss = get_tree().get_first_node_in_group("boss")
@@ -688,7 +823,7 @@ func _capture_screenshot() -> void:
         hud.set_boss_health(99999, 99999)
     await get_tree().create_timer(3.4).timeout
     await RenderingServer.frame_post_draw
-    var fourth_error := _save_screenshot("res://screenshots/m4_build_screenshot.png")
+    var fifth_error := _save_screenshot("res://screenshots/m4_build_screenshot.png")
 
     choosing_upgrade = false
     victory = false
@@ -699,6 +834,7 @@ func _capture_screenshot() -> void:
     await get_tree().process_frame
     victory = true
     weapon_manager.visible = false
+    Fx.clear_effects()
     for projectile in projectiles.get_children():
         projectile.queue_free()
     get_tree().paused = true
@@ -710,11 +846,11 @@ func _capture_screenshot() -> void:
     hud.show_victory(120.0, TOTAL_WAVES, TOTAL_WAVES)
     await get_tree().create_timer(0.2).timeout
     await RenderingServer.frame_post_draw
-    var fifth_error := _save_screenshot("res://screenshots/m4_end_screenshot.png")
+    var sixth_error := _save_screenshot("res://screenshots/m4_end_screenshot.png")
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
-    if first_error == OK and second_error == OK and third_error == OK and fourth_error == OK and fifth_error == OK:
-        print("SCREENSHOT_SAVED m4_screenshot.png m4_upgrade_screenshot.png m4_evolution_screenshot.png m4_build_screenshot.png m4_end_screenshot.png")
+    if first_error == OK and second_error == OK and third_error == OK and fourth_error == OK and fifth_error == OK and sixth_error == OK:
+        print("SCREENSHOT_SAVED m4_screenshot.png m4_upgrade_screenshot.png m4_evolution_screenshot.png m4_enemies_screenshot.png m4_build_screenshot.png m4_end_screenshot.png")
         get_tree().quit(0)
     else:
         get_tree().quit(1)

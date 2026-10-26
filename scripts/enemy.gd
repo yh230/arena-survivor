@@ -43,9 +43,11 @@ func take_damage(amount: int) -> void:
     health -= amount
     damage_flash = 0.12
     Audio.play("hit", -16.0)
+    Fx.damage_number(global_position + Vector2(0.0, -26.0), amount, Color("#fef3c7"))
     queue_redraw()
     if health <= 0:
         Audio.play("enemy_die", -10.0)
+        Fx.burst(global_position, Color("#f87171"), 8)
         queue_free()
 
 func stop() -> void:

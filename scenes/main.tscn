@@ -8,13 +8,17 @@
 process_mode = 3
 script = ExtResource("1_main")
 
+[node name="Camera2D" type="Camera2D" parent="."]
+position = Vector2(640, 360)
+enabled = true
+
 [node name="Player" parent="." instance=ExtResource("2_player")]
 position = Vector2(640, 360)
 z_index = 2
 
 [node name="Enemies" type="Node2D" parent="."]
 
-[node name="Projectiles" type="Node2D" parent="."]
+[node name="Projectiles" type="Node2D" parent="." groups=["projectile_container"]]
 z_index = 3
 
 [node name="HUD" parent="." instance=ExtResource("3_hud")]

@@ -48,6 +48,7 @@ var turret_timer := 0.0
 var turrets: Array = []
 var orbiter_angle := 0.0
 var orbiter_tick := 0.0
+var orbiter_sfx_timer := 0.0
 var orbiter_global_position := Vector2.ZERO
 var trail_timer := 0.0
 var fire_patches: Array = []
@@ -122,7 +123,7 @@ func _turret_fire(turret: Dictionary, target) -> void:
     else:
         _damage_enemy(target, _turret_damage())
         _add_beam([from, to], Color(0.45, 1.0, 1.0, 0.85), 3.0, 0.07)
-    Audio.play("shoot", -24.0)
+    Audio.play("turret", -24.0)
 
 func _update_orbiter(delta: float) -> void:
     var level: int = _level("orbiter")
@@ -131,12 +132,17 @@ func _update_orbiter(delta: float) -> void:
 
     orbiter_angle += _orbiter_speed() * delta
     orbiter_global_position = player.global_position + Vector2.from_angle(orbiter_angle) * _orbiter_radius()
+    orbiter_sfx_timer = maxf(0.0, orbiter_sfx_timer - delta)
 
     orbiter_tick -= delta
     if orbiter_tick <= 0.0:
         orbiter_tick = _orbiter_tick_interval()
-        for enemy in _enemies_in_radius(orbiter_global_position, _orbiter_hit_radius()):
+        var hit_enemies: Array = _enemies_in_radius(orbiter_global_position, _orbiter_hit_radius())
+        for enemy in hit_enemies:
             _damage_enemy(enemy, _orbiter_damage())
+        if not hit_enemies.is_empty() and orbiter_sfx_timer <= 0.0:
+            Audio.play("orbiter", -28.0)
+            orbiter_sfx_timer = 0.8
 
     if _evolution("orbiter") == "orbiter:fire":
         trail_timer -= delta
@@ -168,7 +174,7 @@ func _update_chain(delta: float) -> void:
         _damage_enemy(enemy, _chain_damage())
     chain_points = points
     chain_life = 0.16
-    Audio.play("shoot", -22.0)
+    Audio.play("chain", -20.0)
 
 func _chain_targets(first) -> Array:
     var targets: Array = [first]
@@ -215,7 +221,7 @@ func _update_pierce(delta: float) -> void:
         if _evolution("pierce") == "pierce:railgun":
             color = Color(0.85, 0.8, 1.0, 0.95)
         _add_beam([start, end], color, 4.0, 0.10)
-    Audio.play("shoot", -20.0)
+    Audio.play("pierce", -20.0)
 
 func _update_effects(delta: float) -> void:
     for index in range(beams.size() - 1, -1, -1):

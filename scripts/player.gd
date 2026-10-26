@@ -131,6 +131,8 @@ func take_damage(amount: int) -> void:
     health = maxi(0, health - amount)
     hit_flash = 0.15
     Audio.play("hurt", -8.0)
+    Fx.damage_number(global_position + Vector2(0.0, -30.0), amount, Color("#fca5a5"))
+    Fx.shake(7.0, 0.16)
     health_changed.emit(health, max_health)
     if health <= 0:
         _die()
@@ -202,6 +204,12 @@ func _draw() -> void:
         return
 
     if dash_time > 0.0:
+        for index in range(1, 4):
+            draw_circle(
+                -dash_direction * float(index) * 15.0,
+                18.0 - float(index) * 4.0,
+                Color(0.20, 0.95, 0.85, 0.15)
+            )
         draw_circle(Vector2.ZERO, 29.0, Color(0.25, 1.0, 0.90, 0.25))
     if hit_flash > 0.0:
         draw_circle(Vector2.ZERO, 25.0, Color(1.0, 1.0, 1.0, 0.30))

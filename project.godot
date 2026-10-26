@@ -10,6 +10,7 @@ config/icon="res://icon.svg"
 [autoload]
 
 Audio="*res://scripts/audio_manager.gd"
+Fx="*res://scripts/fx.gd"
 
 [display]
 
