@@ -1,5 +1,7 @@
 extends Control
 
+const UI := preload("res://scripts/ui_forge.gd")
+
 @export var base_radius := 100.0
 @export var knob_radius := 42.0
 @export var dead_zone := 0.12
@@ -81,9 +83,18 @@ func _draw() -> void:
     if _center == Vector2.ZERO:
         _center = size * 0.5
 
-    draw_circle(_center, base_radius, Color(0.06, 0.16, 0.18, 0.65))
-    draw_arc(_center, base_radius, 0.0, TAU, 64, Color(0.30, 0.90, 0.85, 0.55), 3.0, true)
+    draw_circle(_center, base_radius, Color(0.035, 0.085, 0.095, 0.74))
+    draw_arc(_center, base_radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.55), 1.5, true)
+    draw_arc(_center, base_radius - 7.0, 0.0, TAU, 64, Color(0.16, 0.32, 0.32, 0.42), 1.0, true)
+    for index in range(12):
+        var angle := TAU * float(index) / 12.0
+        var inner := _center + Vector2.from_angle(angle) * (base_radius - 5.0)
+        var outer := _center + Vector2.from_angle(angle) * (base_radius - 12.0)
+        draw_line(inner, outer, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.35), 1.0, true)
 
     var knob_position := _center + _vector * base_radius
-    draw_circle(knob_position, knob_radius, Color(0.12, 0.70, 0.65, 0.70))
-    draw_circle(knob_position, knob_radius * 0.45, Color(0.85, 1.0, 1.0, 0.85))
+    draw_circle(knob_position, knob_radius + 3.0, Color(0.0, 0.0, 0.0, 0.28))
+    draw_circle(knob_position, knob_radius, Color(0.10, 0.42, 0.40, 0.92))
+    draw_circle(knob_position, knob_radius * 0.72, Color(0.16, 0.78, 0.71, 0.95))
+    draw_circle(knob_position, knob_radius * 0.34, Color(0.86, 1.0, 1.0, 0.92))
+    draw_arc(knob_position, knob_radius, 0.0, TAU, 48, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.65), 1.2, true)

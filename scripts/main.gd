@@ -12,6 +12,12 @@ const STAGE_IDS := [
     "2-1", "2-2", "2-3", "2-4",
     "3-1", "3-2", "3-3", "3-4",
 ]
+const CHAPTER_NAMES := ["第一章 · 熔炉工坊", "第二章 · 赤沙机关", "第三章 · 天工禁地"]
+const STAGE_NAMES := [
+    ["熔炉入口", "风蚀回廊", "齿轮深渊", "守卫核心"],
+    ["赤沙门", "流沙阱", "风暴眼", "沙王座"],
+    ["禁地门", "铜人阵", "天工台", "百炼殿"],
+]
 const CHAPTER_MULT := [1.0, 1.25, 1.55]
 const WAVES_PER_STAGE := 16
 const BOSS_WAVES := [8, 16]
@@ -85,6 +91,7 @@ func _ready() -> void:
     hud.retry_stage.connect(_on_retry_stage)
     hud.stage_select.connect(_on_stage_select)
     hud.dash_requested.connect(player.try_dash)
+    player.health_changed.connect(hud.set_health)
     Fx.shake_requested.connect(_on_shake_requested)
 
     _load_progress()
@@ -112,6 +119,8 @@ func _process(delta: float) -> void:
     if player.is_dead:
         _on_player_died()
         return
+
+    hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
 
     if boss_wave:
         boss_spawn_timer -= delta
@@ -193,8 +202,21 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
 
 func _stage_label() -> String:
     if is_endless:
-        return "ENDLESS"
+        return "无尽"
     return "%d-%d" % [chapter, stage_number]
+
+func _stage_label_with_name() -> String:
+    if is_endless:
+        return "无尽试炼"
+    return "%s · %s" % [_stage_label(), _stage_name(_stage_label())]
+
+func _stage_name(id: String) -> String:
+    var index := _stage_index(id)
+    if index < 0:
+        return ""
+    var chapter_index := int(index / 4)
+    var stage_index_local := index % 4
+    return STAGE_NAMES[chapter_index][stage_index_local]
 
 func _stage_index(id: String) -> int:
     return STAGE_IDS.find(id)
@@ -374,7 +396,7 @@ func _open_shop() -> void:
     get_tree().paused = true
     var stats: Dictionary = weapon_manager.get_item_stats()
     shop_free_rerolls = int(stats["free_rerolls"])
-    shop_message = "SPEND GOLD, THEN START THE NEXT WAVE"
+    shop_message = "花费金币，然后开始下一波"
     _generate_offers()
     if wave == 1:
         _ensure_starter_offer()
@@ -451,33 +473,39 @@ func _shop_data() -> Dictionary:
         var title := ""
         var desc := ""
         var reason := ""
+        var owned := 0
         if offer["kind"] == "weapon":
             can_buy = weapon_manager.can_buy_weapon(offer["id"], offer["quality"])
             title = weapon_manager.get_weapon_title(offer["id"])
             desc = weapon_manager.get_weapon_desc(offer["id"])
-            if not can_buy:
-                var owned_weapon: int = weapon_manager.get_weapon_quality(offer["id"])
-                reason = "SLOTS FULL" if owned_weapon == 0 else ("MAX QUALITY" if owned_weapon >= 4 else "NEEDS EQUAL OR HIGHER QUALITY")
+            owned = weapon_manager.get_weapon_quality(offer["id"])
         else:
             can_buy = weapon_manager.can_buy_item(offer["id"], offer["quality"])
             title = weapon_manager.get_item_title(offer["id"])
             desc = weapon_manager.get_item_desc(offer["id"])
-            if not can_buy:
-                var owned_item: int = weapon_manager.get_item_quality(offer["id"])
-                reason = "SLOTS FULL" if owned_item == 0 else ("MAX QUALITY" if owned_item >= 4 else "NEEDS EQUAL OR HIGHER QUALITY")
+            owned = weapon_manager.get_item_quality(offer["id"])
         if offer["bought"]:
-            reason = "SOLD"
+            reason = "已售"
         elif can_buy and gold < int(offer["price"]):
-            reason = "NOT ENOUGH GOLD"
+            reason = "金币不足"
+        elif not can_buy:
+            if owned == 0:
+                reason = "槽位已满"
+            elif owned >= 4:
+                reason = "已满级"
+            else:
+                reason = "需要同品质或更高"
         offers.append({
             "title": title,
             "desc": desc,
+            "quality": int(offer["quality"]),
             "quality_name": weapon_manager.get_quality_name(offer["quality"]),
             "quality_color": weapon_manager.get_quality_color(offer["quality"]),
             "price": offer["price"],
             "bought": offer["bought"],
             "disabled": offer["bought"] or not can_buy or gold < int(offer["price"]),
             "reason": reason,
+            "owned": owned,
             "kind": offer["kind"],
             "id": offer["id"],
         })
@@ -505,7 +533,7 @@ func _on_buy_offer(index: int) -> void:
         return
     var offer: Dictionary = shop_offers[index]
     if offer["bought"] or gold < int(offer["price"]):
-        shop_message = "NOT ENOUGH GOLD"
+        shop_message = "金币不足"
         hud.refresh_shop(_shop_data())
         return
 
@@ -515,7 +543,7 @@ func _on_buy_offer(index: int) -> void:
     else:
         result = weapon_manager.buy_item(offer["id"], offer["quality"])
     if not result.get("ok", false):
-        shop_message = "NO SPACE OR CANNOT UPGRADE"
+        shop_message = "槽位已满或无法升品"
         hud.refresh_shop(_shop_data())
         return
 
@@ -524,13 +552,13 @@ func _on_buy_offer(index: int) -> void:
     var final_quality := int(result.get("quality", offer["quality"]))
     var quality_name: String = weapon_manager.get_quality_name(final_quality)
     var title: String = weapon_manager.get_weapon_title(offer["id"]) if offer["kind"] == "weapon" else weapon_manager.get_item_title(offer["id"])
-    shop_message = ("GOT " if bool(result.get("new", false)) else "UPGRADED ") + quality_name + " " + title
+    shop_message = ("获得 " if bool(result.get("new", false)) else "升品为 ") + quality_name + " " + title
     _apply_item_stats()
     hud.set_gold(gold)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
     hud.set_item_slots(weapon_manager.get_item_slots())
     if _all_offers_bought():
-        shop_message = "SHOP AUTO-REFRESHED"
+        shop_message = "商店已刷新"
         _generate_offers()
     hud.refresh_shop(_shop_data())
 
@@ -545,12 +573,12 @@ func _on_reroll_shop() -> void:
         return
     if shop_free_rerolls > 0:
         shop_free_rerolls -= 1
-        shop_message = "FREE REROLL"
+        shop_message = "免费刷新"
     elif gold >= REROLL_COST:
         gold -= REROLL_COST
-        shop_message = "REROLLED"
+        shop_message = "已刷新"
     else:
-        shop_message = "NOT ENOUGH GOLD"
+        shop_message = "金币不足"
         hud.refresh_shop(_shop_data())
         return
     _generate_offers()
@@ -566,7 +594,7 @@ func _on_sell_weapon(weapon_id: String) -> void:
     var price := int(float(_offer_price("weapon", quality)) * 0.5 * sell_mult)
     weapon_manager.sell_weapon(weapon_id)
     gold += price
-    shop_message = "SOLD FOR %dg" % price
+    shop_message = "已出售，获得 %d 金币" % price
     _apply_item_stats()
     hud.set_gold(gold)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
@@ -581,7 +609,7 @@ func _on_sell_item(item_id: String) -> void:
     var price := int(float(_offer_price("item", quality)) * 0.5 * sell_mult)
     weapon_manager.sell_item(item_id)
     gold += price
-    shop_message = "SOLD FOR %dg" % price
+    shop_message = "已出售，获得 %d 金币" % price
     _apply_item_stats()
     hud.set_gold(gold)
     hud.set_item_slots(weapon_manager.get_item_slots())
@@ -626,14 +654,29 @@ func _on_stage_clear() -> void:
         next_stage_id = STAGE_IDS[stage_index + 1] if stage_index + 1 < STAGE_IDS.size() else ""
     else:
         next_stage_id = ""
-    var clear_text := "%s · WAVE %d CLEARED\nGOLD %dg" % [_stage_label(), wave, gold]
-    if next_stage_id == "" and not is_endless:
-        clear_text += "\nCAMPAIGN COMPLETE"
+    var clear_text := "波次 %d / %d\n金币 %d\n%s" % [wave, WAVES_PER_STAGE, gold, _build_summary()]
+    var next_label := ""
+    if next_stage_id != "":
+        next_label = "下一关 · %s %s" % [next_stage_id, _stage_name(next_stage_id)]
+    else:
+        next_label = "全关通关 · 无尽试炼已解锁"
     hud.show_stage_clear(
-        _stage_label(),
+        _stage_label_with_name(),
         next_stage_id != "",
-        clear_text
+        clear_text,
+        next_label
     )
+
+func _build_summary() -> String:
+    var weapons := 0
+    for slot in weapon_manager.get_weapon_slots():
+        if not slot.is_empty():
+            weapons += 1
+    var items := 0
+    for slot in weapon_manager.get_item_slots():
+        if not slot.is_empty():
+            items += 1
+    return "构筑 %d 武器 · %d 道具" % [weapons, items]
 
 func _on_player_died() -> void:
     if game_over:
@@ -643,10 +686,12 @@ func _on_player_died() -> void:
     if is_endless:
         best_endless_wave = maxi(best_endless_wave, wave)
         _save_progress()
-    hud.show_game_over(
-        _stage_label(),
-        "REACHED WAVE %d\nGOLD %dg\nBEST ENDLESS %d" % [wave, gold, best_endless_wave]
-    )
+    var died_text := ""
+    if is_endless:
+        died_text = "抵达第 %d 波\n金币 %d\n无尽最佳 %d" % [wave, gold, best_endless_wave]
+    else:
+        died_text = "抵达第 %d 波\n金币 %d\n%s" % [wave, gold, _build_summary()]
+    hud.show_game_over(_stage_label_with_name(), died_text)
     Fx.clear_effects()
     weapon_manager.visible = false
     for projectile in projectiles.get_children():
@@ -688,16 +733,25 @@ func _stage_select_data() -> Dictionary:
     var stages: Array = []
     for index in range(STAGE_IDS.size()):
         var parts: PackedStringArray = STAGE_IDS[index].split("-")
+        var chapter_no := int(parts[0])
+        var stage_no := int(parts[1])
         stages.append({
             "id": STAGE_IDS[index],
             "label": STAGE_IDS[index],
-            "chapter": int(parts[0]),
-            "stage": int(parts[1]),
+            "name": STAGE_NAMES[chapter_no - 1][stage_no - 1],
+            "chapter": chapter_no,
+            "stage": stage_no,
             "locked": index > max_unlocked,
             "cleared": index < max_unlocked,
         })
+    var current_index := -1
+    if max_unlocked < STAGE_IDS.size():
+        current_index = max_unlocked
     return {
         "stages": stages,
+        "chapter_names": CHAPTER_NAMES,
+        "current_index": current_index,
+        "cleared_count": mini(max_unlocked, STAGE_IDS.size()),
         "endless_unlocked": endless_unlocked,
         "best_endless": best_endless_wave,
     }
@@ -767,6 +821,8 @@ func _draw() -> void:
 
 func _capture_screenshot() -> void:
     await get_tree().create_timer(0.6).timeout
+    max_unlocked = 1
+    hud.show_stage_select(_stage_select_data())
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_stage_select.png")
 
@@ -787,6 +843,15 @@ func _capture_screenshot() -> void:
     hud.set_gold(gold)
     wave_time_left = 0.05
     await get_tree().create_timer(0.5).timeout
+    if shop_open and not shop_offers.is_empty():
+        shop_offers[0] = {
+            "kind": "item",
+            "id": "boots",
+            "quality": 2,
+            "price": 16,
+            "bought": false,
+        }
+        hud.refresh_shop(_shop_data())
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_shop.png")
 
@@ -806,6 +871,10 @@ func _capture_screenshot() -> void:
         boss.health = 99999
         hud.set_boss_health(99999, 99999)
     await get_tree().create_timer(3.0).timeout
+    if boss != null and is_instance_valid(boss):
+        boss.global_position = Vector2(640.0, 250.0)
+        boss.velocity = Vector2.ZERO
+    await get_tree().create_timer(0.25).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_boss.png")
 
@@ -815,7 +884,7 @@ func _capture_screenshot() -> void:
     Fx.clear_effects()
     stage_clear = true
     get_tree().paused = true
-    hud.show_stage_clear("1-1", true, "WAVE 16 CLEARED\nGOLD 100g")
+    hud.show_stage_clear("1-1 · 熔炉入口", true, "波次 16 / 16\n金币 100\n构筑 4 武器 · 2 道具", "下一关 · 1-2 风蚀回廊")
     await get_tree().create_timer(0.2).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_clear.png")
@@ -907,6 +976,9 @@ func _run_smoke_test() -> void:
     if player.get_dash_cooldown_remaining() <= 0.0:
         _fail_test("dash cooldown did not start")
         return
+    if not dash_button.disabled:
+        _fail_test("dash button did not enter cooldown")
+        return
     if player.global_position.distance_to(dash_start) <= 20.0:
         _fail_test("dash did not move player")
         return
@@ -937,6 +1009,9 @@ func _run_smoke_test() -> void:
         return
     if player.health >= player.max_health:
         _fail_test("shooter projectile did not hit player")
+        return
+    if hud.get_health_text() == "%d / %d" % [player.max_health, player.max_health]:
+        _fail_test("health HUD did not update")
         return
     shooter.queue_free()
     for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
@@ -981,7 +1056,17 @@ func _run_smoke_test() -> void:
 
     gold = 100
     hud.set_gold(gold)
+    shop_offers[0] = {
+        "kind": "weapon",
+        "id": "maple",
+        "quality": 1,
+        "price": 10,
+        "bought": false,
+    }
     hud.refresh_shop(_shop_data())
+    if hud.get_shop_offer_badge(0) != "可升品":
+        _fail_test("merge badge missing")
+        return
     var offer_button: Button = null
     for index in range(4):
         var button: Button = hud.get_shop_offer_button(index)
@@ -1164,6 +1249,15 @@ func _run_smoke_test() -> void:
     await get_tree().create_timer(0.3).timeout
     if wave != 2:
         _fail_test("endless wave did not advance")
+        return
+
+    player.take_damage(999999)
+    await get_tree().create_timer(0.3).timeout
+    if not hud.is_end_panel_visible():
+        _fail_test("game over panel missing")
+        return
+    if hud.get_retry_button() == null:
+        _fail_test("game over retry button missing")
         return
 
     if Audio.get_sound_names().size() < 17:

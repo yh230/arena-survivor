@@ -3,26 +3,26 @@ extends Node2D
 const MAX_WEAPON_SLOTS := 6
 const MAX_ITEM_SLOTS := 6
 const MAX_QUALITY := 4
-const QUALITY_NAMES := ["", "COMMON", "RARE", "EPIC", "LEGENDARY"]
+const QUALITY_NAMES := ["", "普通", "稀有", "史诗", "传说"]
 const QUALITY_DAMAGE := [0.0, 1.0, 1.35, 1.8, 2.4]
 const QUALITY_COOLDOWN := [0.0, 1.0, 0.92, 0.84, 0.76]
 const WEAPON_ORDER := ["peony", "maple", "justice", "vigil", "hammer", "elixir"]
 const WEAPON_DATA := {
-    "peony": {"title": "PEONY TURRET", "desc": "deploy auto turrets"},
-    "maple": {"title": "MAPLE ORBITER", "desc": "orbiting blades"},
-    "justice": {"title": "JUSTICE CHAIN", "desc": "chain lightning"},
-    "vigil": {"title": "VIGIL CANNON", "desc": "piercing shots"},
-    "hammer": {"title": "BLAST HAMMER", "desc": "area slam"},
-    "elixir": {"title": "DEADLY ELIXIR", "desc": "poison fields"},
+    "peony": {"title": "牡丹炮台", "desc": "自动部署炮台"},
+    "maple": {"title": "枫叶环刃", "desc": "环绕飞刃"},
+    "justice": {"title": "正义连锁", "desc": "连锁闪电"},
+    "vigil": {"title": "守夜炮", "desc": "穿透射线"},
+    "hammer": {"title": "爆裂重锤", "desc": "范围重击"},
+    "elixir": {"title": "致命灵药", "desc": "持续毒雾"},
 }
 const ITEM_ORDER := ["magnet", "boots", "holy_fire", "lucky_cat", "anvil", "jade"]
 const ITEM_DATA := {
-    "magnet": {"title": "MAGNET", "desc": "larger pickup radius"},
-    "boots": {"title": "BOOTS", "desc": "more move speed"},
-    "holy_fire": {"title": "HOLY FIRE", "desc": "more max HP"},
-    "lucky_cat": {"title": "LUCKY CAT", "desc": "better selling"},
-    "anvil": {"title": "ANVIL", "desc": "free shop rerolls"},
-    "jade": {"title": "JADE", "desc": "more gold"},
+    "magnet": {"title": "磁铁", "desc": "扩大拾取范围"},
+    "boots": {"title": "疾行靴", "desc": "提升移动速度"},
+    "holy_fire": {"title": "圣火", "desc": "提升生命上限"},
+    "lucky_cat": {"title": "招财猫", "desc": "出售与金币收益提升"},
+    "anvil": {"title": "铁砧", "desc": "商店免费刷新"},
+    "jade": {"title": "翡翠", "desc": "金币收益提升"},
 }
 
 var player = null
