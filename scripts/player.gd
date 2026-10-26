@@ -16,6 +16,8 @@ var attack_cooldown := 0.0
 var hit_flash := 0.0
 var joystick = null
 var facing := Vector2.UP
+var projectile_count := 1
+var lifesteal := 0
 
 func _ready() -> void:
     health = max_health
@@ -78,12 +80,18 @@ func _try_auto_attack() -> void:
     if distance > attack_range or projectile_scene == null:
         return
 
-    var direction: Vector2 = (target.global_position - global_position).normalized()
-    var projectile = projectile_scene.instantiate()
-    get_parent().get_node("Projectiles").add_child(projectile)
-    projectile.global_position = global_position + direction * 24.0
-    projectile.direction = direction
-    projectile.damage = projectile_damage
+    var base_direction: Vector2 = (target.global_position - global_position).normalized()
+    var shots := maxi(1, projectile_count)
+    var spread := deg_to_rad(10.0)
+    for index in range(shots):
+        var angle_offset := (float(index) - (float(shots) - 1.0) * 0.5) * spread
+        var shot_direction := base_direction.rotated(angle_offset)
+        var projectile = projectile_scene.instantiate()
+        get_parent().get_node("Projectiles").add_child(projectile)
+        projectile.global_position = global_position + shot_direction * 24.0
+        projectile.direction = shot_direction
+        projectile.damage = projectile_damage
+        projectile.source = self
     attack_cooldown = attack_interval
 
 func _find_nearest_enemy():
@@ -112,6 +120,31 @@ func _die() -> void:
     velocity = Vector2.ZERO
     queue_redraw()
     died.emit()
+
+func apply_upgrade(id: String) -> void:
+    match id:
+        "damage":
+            projectile_damage += 5
+        "attack_speed":
+            attack_interval = maxf(0.18, attack_interval * 0.8)
+        "move_speed":
+            move_speed += 30.0
+        "max_health":
+            max_health += 25
+            health += 25
+            health_changed.emit(health, max_health)
+        "projectiles":
+            projectile_count = mini(4, projectile_count + 1)
+        "lifesteal":
+            lifesteal += 2
+
+func on_projectile_hit() -> void:
+    if is_dead or lifesteal <= 0:
+        return
+    var previous := health
+    health = mini(max_health, health + lifesteal)
+    if health != previous:
+        health_changed.emit(health, max_health)
 
 func _draw() -> void:
     if is_dead:

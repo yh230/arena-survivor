@@ -74,6 +74,9 @@ func set_test_vector(value: Vector2) -> void:
     _vector = value.limit_length(1.0)
     queue_redraw()
 
+func release() -> void:
+    _release()
+
 func _draw() -> void:
     if _center == Vector2.ZERO:
         _center = size * 0.5

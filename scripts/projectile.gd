@@ -5,6 +5,7 @@ var speed := 700.0
 var damage := 10
 var lifetime := 0.95
 var hit := false
+var source = null
 
 func _ready() -> void:
     body_entered.connect(_on_body_entered)
@@ -22,6 +23,8 @@ func _on_body_entered(body: Node) -> void:
     if body.is_in_group("enemies") and body.has_method("take_damage"):
         hit = true
         body.take_damage(damage)
+        if is_instance_valid(source) and source.has_method("on_projectile_hit"):
+            source.on_projectile_hit()
         queue_free()
 
 func _draw() -> void:
