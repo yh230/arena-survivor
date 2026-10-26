@@ -1,5 +1,7 @@
 extends CharacterBody2D
 
+signal died(drop_position: Vector2, coin_count: int)
+
 @export var max_health := 36
 @export var move_speed := 75.0
 @export var explosion_damage := 24
@@ -63,6 +65,7 @@ func _explode() -> void:
     Audio.play("explode", -4.0)
     Fx.burst(global_position, Color("#fb923c"), 14)
     Fx.shake(10.0, 0.22)
+    died.emit(global_position, 2)
     explosion_timer = 0.3
     queue_redraw()
 
@@ -77,6 +80,7 @@ func take_damage(amount: int) -> void:
     if health <= 0:
         Audio.play("enemy_die", -10.0)
         Fx.burst(global_position, Color("#fb923c"), 10)
+        died.emit(global_position, 2)
         queue_free()
 
 func stop() -> void:

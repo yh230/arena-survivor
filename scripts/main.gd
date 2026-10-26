@@ -3,47 +3,67 @@ extends Node2D
 const ENEMY_SCENE := preload("res://scenes/enemy.tscn")
 const SHOOTER_SCENE := preload("res://scenes/shooter.tscn")
 const EXPLODER_SCENE := preload("res://scenes/exploder.tscn")
+const TREASURE_SCENE := preload("res://scenes/treasure_imp.tscn")
 const BOSS_SCENE := preload("res://scenes/boss.tscn")
-const TOTAL_WAVES := 10
-const WAVE_COUNTS := [8, 10, 12, 14, 16, 18, 20, 22, 24, 1]
-const WAVE_INTERVALS := [1.15, 1.05, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.0]
-const WAVE_HEALTH := [30, 38, 46, 54, 62, 70, 78, 86, 94, 0]
-const WAVE_CONTACT_DAMAGE := [8, 9, 10, 11, 12, 13, 14, 15, 16, 0]
-const WAVE_SPEED_MIN := [85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 0.0]
-const WAVE_SPEED_MAX := [120.0, 125.0, 130.0, 135.0, 140.0, 145.0, 150.0, 155.0, 160.0, 0.0]
-const BOSS_HEALTH := 1600
-const MAX_ENEMIES := 20
+const COIN_SCRIPT := preload("res://scripts/coin.gd")
+
+const STAGE_IDS := [
+    "1-1", "1-2", "1-3", "1-4",
+    "2-1", "2-2", "2-3", "2-4",
+    "3-1", "3-2", "3-3", "3-4",
+]
+const CHAPTER_MULT := [1.0, 1.25, 1.55]
+const WAVES_PER_STAGE := 16
+const BOSS_WAVES := [8, 16]
+const START_GOLD := 15
+const REROLL_COST := 2
+const SHOP_OFFER_COUNT := 4
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
-const UPGRADE_POOL := {
-    "damage": {"title": "DAMAGE +5"},
-    "attack_speed": {"title": "ATTACK SPEED +20%"},
-    "move_speed": {"title": "MOVE SPEED +30"},
-    "max_health": {"title": "MAX HP +25"},
-    "projectiles": {"title": "PROJECTILES +1"},
-    "lifesteal": {"title": "LIFESTEAL +2"},
-}
 
 @onready var player = $Player
 @onready var enemies: Node2D = $Enemies
 @onready var projectiles: Node2D = $Projectiles
+@onready var coins: Node2D = $Coins
 @onready var hud = $HUD
 @onready var weapon_manager = $Player/WeaponManager
 @onready var camera: Camera2D = $Camera2D
 
+var save_path := SAVE_PATH
+var test_mode := false
+
+var stage_id := ""
+var stage_index := 0
+var chapter := 1
+var stage_number := 1
+var is_endless := false
+var menu_open := false
+var shop_open := false
+var game_over := false
+var stage_clear := false
+
 var wave := 1
 var wave_active := false
-var enemies_remaining_to_spawn := 0
+var wave_time_left := 0.0
 var spawn_timer := 0.0
-var elapsed := 0.0
-var game_over := false
-var victory := false
-var choosing_upgrade := false
-var best_wave := 0
-var test_mode := false
-var save_path := SAVE_PATH
-var pending_evolution_type := ""
-var forced_spawn_type := ""
+var boss_spawn_timer := 0.0
+var boss_spawned := false
+var boss_wave := false
+var treasure_spawned := false
+
+var gold := START_GOLD
+var pickup_radius := 60.0
+var gold_mult := 1.0
+var sell_mult := 1.0
+var shop_free_rerolls := 0
+var shop_message := ""
+var shop_offers: Array = []
+var next_stage_id := ""
+
+var max_unlocked := 0
+var endless_unlocked := false
+var best_endless_wave := 0
+
 var shake_time := 0.0
 var shake_strength := 0.0
 
@@ -52,19 +72,30 @@ func _ready() -> void:
     if test_mode:
         save_path = TEST_SAVE_PATH
         DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    get_viewport().size_changed.connect(queue_redraw)
-    player.health_changed.connect(hud.set_health)
-    player.died.connect(_on_player_died)
-    hud.restart_requested.connect(_restart)
-    hud.upgrade_selected.connect(_on_upgrade_selected)
-    hud.evolution_selected.connect(_on_evolution_selected)
+
+    hud.stage_selected.connect(_on_stage_selected)
+    hud.endless_selected.connect(_on_endless_selected)
+    hud.buy_offer.connect(_on_buy_offer)
+    hud.reroll_shop.connect(_on_reroll_shop)
+    hud.sell_weapon.connect(_on_sell_weapon)
+    hud.sell_item.connect(_on_sell_item)
+    hud.next_wave.connect(_on_next_wave)
+    hud.next_stage.connect(_on_next_stage)
+    hud.retry_stage.connect(_on_retry_stage)
+    hud.stage_select.connect(_on_stage_select)
     hud.dash_requested.connect(player.try_dash)
     Fx.shake_requested.connect(_on_shake_requested)
-    _load_best_wave()
-    hud.set_health(player.health, player.max_health)
-    hud.set_best_wave(best_wave)
-    hud.set_weapon_slots(weapon_manager.get_slots())
-    _start_wave(1)
+
+    _load_progress()
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.set_item_slots(weapon_manager.get_item_slots())
+
+    if RunState.endless:
+        _begin_run("", true)
+    elif RunState.selected_stage != "":
+        _begin_run(RunState.selected_stage, false)
+    else:
+        _show_stage_select()
 
     if OS.get_cmdline_user_args().has("--smoke-test"):
         call_deferred("_run_smoke_test")
@@ -73,192 +104,626 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
     _update_shake(delta)
-    if game_over or victory or choosing_upgrade or not wave_active:
+    if menu_open or shop_open or game_over or stage_clear:
+        return
+    if not wave_active:
+        return
+    if player.is_dead:
+        _on_player_died()
         return
 
-    elapsed += delta
-    spawn_timer -= delta
+    if boss_wave:
+        boss_spawn_timer -= delta
+        if not boss_spawned and boss_spawn_timer <= 0.0:
+            _spawn_boss()
+        if boss_spawned and get_tree().get_first_node_in_group("boss") == null:
+            _finish_wave()
+            return
+    else:
+        if not treasure_spawned and wave % 8 == 4:
+            treasure_spawned = true
+            _spawn_treasure()
+        wave_time_left -= delta
+        spawn_timer -= delta
+        if spawn_timer <= 0.0 and enemies.get_child_count() < 40:
+            _spawn_enemy()
+            spawn_timer = _spawn_interval()
+        if wave_time_left <= 0.0:
+            _finish_wave()
+            return
 
-    if enemies_remaining_to_spawn > 0 and spawn_timer <= 0.0 and enemies.get_child_count() < MAX_ENEMIES:
-        _spawn_enemy()
-        enemies_remaining_to_spawn -= 1
-        spawn_timer = WAVE_INTERVALS[wave - 1]
+    hud.set_enemy_count(enemies.get_child_count())
+    if boss_wave:
+        hud.set_wave_time(0.0, true)
+    else:
+        hud.set_wave_time(maxf(0.0, wave_time_left), false)
+    hud.set_gold(gold)
 
-    var alive := enemies.get_child_count()
-    hud.set_enemy_count(alive)
-    hud.set_remaining(enemies_remaining_to_spawn)
-    hud.set_time(elapsed)
-    hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
+func _show_stage_select() -> void:
+    menu_open = true
+    player.visible = false
+    player.set_physics_process(false)
+    weapon_manager.visible = false
+    _clear_arena()
+    hud.show_stage_select(_stage_select_data())
 
-    if enemies_remaining_to_spawn == 0 and alive == 0:
-        _complete_wave()
+func _begin_run(selected_stage: String, endless: bool) -> void:
+    get_tree().paused = false
+    menu_open = false
+    is_endless = endless
+    stage_id = selected_stage
+    stage_index = _stage_index(stage_id) if not endless else -1
+    chapter = 1
+    stage_number = 1
+    if not endless and stage_index >= 0:
+        chapter = int(stage_index / 4) + 1
+        stage_number = (stage_index % 4) + 1
+
+    game_over = false
+    stage_clear = false
+    shop_open = false
+    wave = 1
+    gold = START_GOLD
+    shop_offers.clear()
+    shop_message = ""
+
+    _clear_arena()
+    player.visible = true
+    player.set_physics_process(true)
+    player.global_position = Vector2(640.0, 360.0)
+    player.is_dead = false
+    player.max_health = 100
+    player.health = 100
+    player.move_speed = 320.0
+    player.health_changed.emit(player.health, player.max_health)
+    weapon_manager.visible = true
+    _apply_item_stats()
+    hud.hide_stage_select()
+    hud.hide_shop()
+    hud.hide_end_panel()
+    hud.set_stage(_stage_label())
+    hud.set_best_wave(best_endless_wave)
+    hud.set_gold(gold)
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.set_item_slots(weapon_manager.get_item_slots())
+    _start_wave(1)
+
+func _stage_label() -> String:
+    if is_endless:
+        return "ENDLESS"
+    return "%d-%d" % [chapter, stage_number]
+
+func _stage_index(id: String) -> int:
+    return STAGE_IDS.find(id)
+
+func _difficulty_mult() -> float:
+    if is_endless:
+        return 1.0 + float(wave) * 0.04
+    return CHAPTER_MULT[chapter - 1] + float(stage_number - 1) * 0.08
+
+func _wave_mult() -> float:
+    var value := 1.0 + float(wave - 1) * 0.06
+    if wave >= 12:
+        value *= 1.2
+    return value
 
 func _start_wave(number: int) -> void:
-    if number > TOTAL_WAVES:
-        return
     wave = number
     wave_active = true
-    choosing_upgrade = false
-    forced_spawn_type = ""
-    if wave == 3:
-        forced_spawn_type = "shooter"
-    elif wave == 5:
-        forced_spawn_type = "exploder"
-    enemies_remaining_to_spawn = WAVE_COUNTS[wave - 1]
-    spawn_timer = 0.35
-    _record_wave(wave)
-    hud.set_wave(wave, TOTAL_WAVES)
+    if is_endless and wave > best_endless_wave:
+        best_endless_wave = wave
+        hud.set_best_wave(best_endless_wave)
+    boss_wave = (number % 8 == 0)
+    boss_spawned = false
+    boss_spawn_timer = 0.6
+    treasure_spawned = false
+    wave_time_left = 18.0 + float(chapter - 1) * 2.0
+    spawn_timer = 0.6
+    hud.hide_boss_bar()
+    hud.set_wave(wave, WAVES_PER_STAGE if not is_endless else 0)
+    hud.set_stage(_stage_label())
+    hud.set_gold(gold)
     hud.set_enemy_count(0)
-    hud.set_remaining(enemies_remaining_to_spawn)
-    hud.set_time(elapsed)
-    hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
-    hud.set_weapon_slots(weapon_manager.get_slots())
+    hud.set_wave_time(wave_time_left, boss_wave)
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.set_item_slots(weapon_manager.get_item_slots())
     Audio.play("wave_start", -12.0)
 
+func _spawn_interval() -> float:
+    var interval := maxf(0.35, 1.05 - float(wave) * 0.03 - float(chapter - 1) * 0.08)
+    if wave >= 12:
+        interval *= 0.75
+    return interval
+
+func _pick_enemy_type() -> String:
+    if wave <= 2:
+        return "chaser"
+    var roll := randf()
+    var shooter_chance := 0.22 + float(chapter - 1) * 0.05
+    var exploder_chance := 0.0
+    if wave >= 5:
+        exploder_chance = 0.16 + float(chapter - 1) * 0.05
+    if wave >= 12:
+        shooter_chance += 0.08
+        exploder_chance += 0.08
+    if roll < exploder_chance:
+        return "exploder"
+    if roll < exploder_chance + shooter_chance:
+        return "shooter"
+    return "chaser"
+
 func _spawn_enemy() -> void:
-    if wave == TOTAL_WAVES:
-        _spawn_boss()
-        return
-
-    var enemy_type := forced_spawn_type
-    if enemy_type != "":
-        forced_spawn_type = ""
-    else:
-        enemy_type = _pick_enemy_type()
-
-    var view_size := get_viewport_rect().size
-    var spawn_position := Vector2.ZERO
-    match randi() % 4:
-        0:
-            spawn_position = Vector2(randf_range(0.0, view_size.x), -32.0)
-        1:
-            spawn_position = Vector2(view_size.x + 32.0, randf_range(0.0, view_size.y))
-        2:
-            spawn_position = Vector2(randf_range(0.0, view_size.x), view_size.y + 32.0)
-        _:
-            spawn_position = Vector2(-32.0, randf_range(0.0, view_size.y))
-
+    var enemy_type := _pick_enemy_type()
     var scene: PackedScene = ENEMY_SCENE
     if enemy_type == "shooter":
         scene = SHOOTER_SCENE
     elif enemy_type == "exploder":
         scene = EXPLODER_SCENE
 
+    var view_size := get_viewport_rect().size
+    var pos := Vector2.ZERO
+    match randi() % 4:
+        0:
+            pos = Vector2(randf_range(0.0, view_size.x), -32.0)
+        1:
+            pos = Vector2(view_size.x + 32.0, randf_range(0.0, view_size.y))
+        2:
+            pos = Vector2(randf_range(0.0, view_size.x), view_size.y + 32.0)
+        _:
+            pos = Vector2(-32.0, randf_range(0.0, view_size.y))
+
+    var mult := _difficulty_mult() * _wave_mult()
     var enemy = scene.instantiate()
     if enemy_type == "shooter":
-        enemy.max_health = 22 + (wave - 1) * 4
+        enemy.max_health = int((18.0 + float(wave) * 5.0) * mult)
         enemy.contact_damage = 5
-        enemy.move_speed = randf_range(90.0, 110.0)
-        enemy.projectile_damage = 6 + wave
+        enemy.move_speed = randf_range(85.0, 110.0)
+        enemy.projectile_damage = 5 + int(wave / 3)
     elif enemy_type == "exploder":
-        enemy.max_health = 30 + (wave - 1) * 6
-        enemy.move_speed = randf_range(65.0, 85.0)
+        enemy.max_health = int((28.0 + float(wave) * 7.0) * mult)
+        enemy.move_speed = randf_range(65.0, 90.0)
         enemy.explosion_damage = 20 + wave * 2
     else:
-        enemy.max_health = WAVE_HEALTH[wave - 1]
-        enemy.contact_damage = WAVE_CONTACT_DAMAGE[wave - 1]
-        enemy.move_speed = randf_range(WAVE_SPEED_MIN[wave - 1], WAVE_SPEED_MAX[wave - 1])
-    enemies.add_child(enemy)
-    enemy.global_position = spawn_position
+        enemy.max_health = int((24.0 + float(wave) * 6.0) * mult)
+        enemy.contact_damage = 6 + int(wave / 3)
+        enemy.move_speed = randf_range(85.0, 125.0) + float(chapter) * 6.0
 
-func _pick_enemy_type() -> String:
-    if wave <= 2:
-        return "chaser"
-    var roll := randf()
-    if wave <= 4:
-        if roll < 0.25:
-            return "shooter"
-        return "chaser"
-    if wave <= 6:
-        if roll < 0.15:
-            return "exploder"
-        if roll < 0.40:
-            return "shooter"
-        return "chaser"
-    if roll < 0.25:
-        return "exploder"
-    if roll < 0.55:
-        return "shooter"
-    return "chaser"
+    enemies.add_child(enemy)
+    enemy.global_position = pos
+    enemy.died.connect(_on_enemy_died)
+
+func _spawn_treasure() -> void:
+    var imp = TREASURE_SCENE.instantiate()
+    var mult := _difficulty_mult() * _wave_mult()
+    imp.max_health = int(50.0 * mult)
+    imp.move_speed = 85.0
+    enemies.add_child(imp)
+    var view_size := get_viewport_rect().size
+    imp.global_position = Vector2(
+        randf_range(180.0, view_size.x - 180.0),
+        randf_range(150.0, view_size.y - 150.0)
+    )
+    imp.died.connect(_on_enemy_died)
+    Fx.burst(imp.global_position, Color("#fbbf24"), 12)
+    Audio.play("wave_start", -18.0)
 
 func _spawn_boss() -> void:
     var boss = BOSS_SCENE.instantiate()
-    boss.max_health = BOSS_HEALTH
+    var mult := _difficulty_mult() * (1.4 if wave >= 16 else 1.0)
+    boss.max_health = int(1000.0 * mult)
     boss.move_speed = 55.0
     boss.contact_damage = 22
     enemies.add_child(boss)
     boss.global_position = Vector2(get_viewport_rect().size.x * 0.5, -90.0)
     boss.health_changed.connect(hud.set_boss_health)
     boss.defeated.connect(_on_boss_defeated)
+    boss.minion_spawned.connect(_on_boss_minion_spawned)
     hud.show_boss_bar(boss.health, boss.max_health)
     Audio.play("boss_spawn", -4.0)
+    boss_spawned = true
+
+func _on_boss_minion_spawned(minion) -> void:
+    minion.died.connect(_on_enemy_died)
+    var mult := _difficulty_mult() * _wave_mult()
+    minion.max_health = int(24.0 * mult)
+    minion.health = minion.max_health
+    minion.contact_damage = 8 + int(wave / 3)
 
 func _on_boss_defeated() -> void:
+    var boss = get_tree().get_first_node_in_group("boss")
+    if boss != null:
+        _on_enemy_died(boss.global_position, 8)
     hud.hide_boss_bar()
 
-func _complete_wave() -> void:
+func _on_enemy_died(drop_position: Vector2, coin_count: int) -> void:
+    var base_value := 1 + int(wave / 5)
+    for index in range(coin_count):
+        var coin = COIN_SCRIPT.new()
+        coins.add_child(coin)
+        coin.global_position = drop_position + Vector2(randf_range(-18.0, 18.0), randf_range(-18.0, 18.0))
+        coin.setup(base_value, player, pickup_radius)
+        coin.collected.connect(_on_coin_collected)
+
+func _on_coin_collected(value: int) -> void:
+    gold += int(float(value) * gold_mult)
+    hud.set_gold(gold)
+
+func _finish_wave() -> void:
     wave_active = false
-    Fx.clear_effects()
-    if wave >= TOTAL_WAVES:
-        victory = true
-        weapon_manager.visible = false
-        for projectile in projectiles.get_children():
-            projectile.queue_free()
-        hud.show_victory(elapsed, TOTAL_WAVES, best_wave)
-        Audio.play("victory", -4.0)
-        get_tree().paused = true
+    _collect_all_coins()
+    _clear_enemies()
+    if not is_endless and wave >= WAVES_PER_STAGE:
+        _on_stage_clear()
+        return
+    _open_shop()
+
+func _open_shop() -> void:
+    shop_open = true
+    get_tree().paused = true
+    var stats: Dictionary = weapon_manager.get_item_stats()
+    shop_free_rerolls = int(stats["free_rerolls"])
+    shop_message = "SPEND GOLD, THEN START THE NEXT WAVE"
+    _generate_offers()
+    if wave == 1:
+        _ensure_starter_offer()
+    hud.show_shop(_shop_data())
+
+func _ensure_starter_offer() -> void:
+    for offer in shop_offers:
+        if offer["kind"] == "weapon" and int(offer["quality"]) == 1:
+            return
+    var weapon_types: Array = weapon_manager.get_weapon_types()
+    var starter := {
+        "kind": "weapon",
+        "id": str(weapon_types[randi() % weapon_types.size()]),
+        "quality": 1,
+        "price": _offer_price("weapon", 1),
+        "bought": false,
+    }
+    if shop_offers.is_empty():
+        shop_offers.append(starter)
+    else:
+        shop_offers[shop_offers.size() - 1] = starter
+
+func _generate_offers() -> void:
+    shop_offers.clear()
+    var used := {}
+    var attempts := 0
+    while shop_offers.size() < SHOP_OFFER_COUNT and attempts < 40:
+        attempts += 1
+        var kind := "weapon" if randf() < 0.55 else "item"
+        var id := ""
+        if kind == "weapon":
+            var weapon_types: Array = weapon_manager.get_weapon_types()
+            id = weapon_types[randi() % weapon_types.size()]
+        else:
+            var item_ids: Array = weapon_manager.get_item_ids()
+            id = item_ids[randi() % item_ids.size()]
+        var quality := _roll_quality()
+        var key := "%s:%s:%d" % [kind, id, quality]
+        if used.has(key):
+            continue
+        used[key] = true
+        var price := _offer_price(kind, quality)
+        shop_offers.append({
+            "kind": kind,
+            "id": id,
+            "quality": quality,
+            "price": price,
+            "bought": false,
+        })
+
+func _roll_quality() -> int:
+    var stage_bonus := 0.0
+    if is_endless:
+        stage_bonus = minf(0.30, float(wave) * 0.006)
+    else:
+        stage_bonus = float(stage_index) * 0.018
+    var roll := randf() - stage_bonus
+    if roll < 0.02:
+        return 4
+    if roll < 0.12:
+        return 3
+    if roll < 0.40:
+        return 2
+    return 1
+
+func _offer_price(kind: String, quality: int) -> int:
+    var prices := [0, 10, 20, 40, 80] if kind == "weapon" else [0, 8, 16, 32, 64]
+    return prices[quality]
+
+func _shop_data() -> Dictionary:
+    var offers: Array = []
+    for offer in shop_offers:
+        var can_buy := false
+        var title := ""
+        var desc := ""
+        var reason := ""
+        if offer["kind"] == "weapon":
+            can_buy = weapon_manager.can_buy_weapon(offer["id"], offer["quality"])
+            title = weapon_manager.get_weapon_title(offer["id"])
+            desc = weapon_manager.get_weapon_desc(offer["id"])
+            if not can_buy:
+                var owned_weapon: int = weapon_manager.get_weapon_quality(offer["id"])
+                reason = "SLOTS FULL" if owned_weapon == 0 else ("MAX QUALITY" if owned_weapon >= 4 else "NEEDS EQUAL OR HIGHER QUALITY")
+        else:
+            can_buy = weapon_manager.can_buy_item(offer["id"], offer["quality"])
+            title = weapon_manager.get_item_title(offer["id"])
+            desc = weapon_manager.get_item_desc(offer["id"])
+            if not can_buy:
+                var owned_item: int = weapon_manager.get_item_quality(offer["id"])
+                reason = "SLOTS FULL" if owned_item == 0 else ("MAX QUALITY" if owned_item >= 4 else "NEEDS EQUAL OR HIGHER QUALITY")
+        if offer["bought"]:
+            reason = "SOLD"
+        elif can_buy and gold < int(offer["price"]):
+            reason = "NOT ENOUGH GOLD"
+        offers.append({
+            "title": title,
+            "desc": desc,
+            "quality_name": weapon_manager.get_quality_name(offer["quality"]),
+            "quality_color": weapon_manager.get_quality_color(offer["quality"]),
+            "price": offer["price"],
+            "bought": offer["bought"],
+            "disabled": offer["bought"] or not can_buy or gold < int(offer["price"]),
+            "reason": reason,
+            "kind": offer["kind"],
+            "id": offer["id"],
+        })
+    var weapons: Array = weapon_manager.get_weapon_slots()
+    for slot in weapons:
+        if not slot.is_empty():
+            slot["sell_price"] = int(float(_offer_price("weapon", int(slot["quality"]))) * 0.5 * sell_mult)
+    var items: Array = weapon_manager.get_item_slots()
+    for slot in items:
+        if not slot.is_empty():
+            slot["sell_price"] = int(float(_offer_price("item", int(slot["quality"]))) * 0.5 * sell_mult)
+    return {
+        "gold": gold,
+        "offers": offers,
+        "weapons": weapons,
+        "items": items,
+        "reroll_cost": REROLL_COST,
+        "free_rerolls": shop_free_rerolls,
+        "message": shop_message,
+        "wave": wave,
+    }
+
+func _on_buy_offer(index: int) -> void:
+    if not shop_open or index < 0 or index >= shop_offers.size():
+        return
+    var offer: Dictionary = shop_offers[index]
+    if offer["bought"] or gold < int(offer["price"]):
+        shop_message = "NOT ENOUGH GOLD"
+        hud.refresh_shop(_shop_data())
         return
 
-    choosing_upgrade = true
-    hud.show_upgrade_choices(_build_choices())
-    get_tree().paused = true
-
-func _on_upgrade_selected(id: String) -> void:
-    if id.begins_with("stat:"):
-        player.apply_upgrade(id.substr(5))
-    elif id.begins_with("weapon:"):
-        weapon_manager.add_weapon(id.substr(7))
-    elif id.begins_with("upgrade:"):
-        var weapon_type := id.substr(8)
-        var result: Dictionary = weapon_manager.upgrade_weapon(weapon_type)
-        if not result.is_empty() and not result["choices"].is_empty():
-            pending_evolution_type = str(result["type"])
-            hud.set_weapon_slots(weapon_manager.get_slots())
-            hud.show_evolution_choices(str(result["title"]), result["choices"])
-            return
+    var result: Dictionary
+    if offer["kind"] == "weapon":
+        result = weapon_manager.buy_weapon(offer["id"], offer["quality"])
     else:
-        push_warning("Unknown upgrade choice: " + id)
+        result = weapon_manager.buy_item(offer["id"], offer["quality"])
+    if not result.get("ok", false):
+        shop_message = "NO SPACE OR CANNOT UPGRADE"
+        hud.refresh_shop(_shop_data())
+        return
 
-    hud.set_weapon_slots(weapon_manager.get_slots())
-    hud.close_upgrade_choices()
-    choosing_upgrade = false
-    get_tree().paused = false
-    _start_wave(wave + 1)
+    gold -= int(offer["price"])
+    offer["bought"] = true
+    var final_quality := int(result.get("quality", offer["quality"]))
+    var quality_name: String = weapon_manager.get_quality_name(final_quality)
+    var title: String = weapon_manager.get_weapon_title(offer["id"]) if offer["kind"] == "weapon" else weapon_manager.get_item_title(offer["id"])
+    shop_message = ("GOT " if bool(result.get("new", false)) else "UPGRADED ") + quality_name + " " + title
+    _apply_item_stats()
+    hud.set_gold(gold)
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.set_item_slots(weapon_manager.get_item_slots())
+    if _all_offers_bought():
+        shop_message = "SHOP AUTO-REFRESHED"
+        _generate_offers()
+    hud.refresh_shop(_shop_data())
 
-func _on_evolution_selected(id: String) -> void:
-    if pending_evolution_type != "":
-        weapon_manager.apply_evolution(pending_evolution_type, id)
-    pending_evolution_type = ""
-    hud.set_weapon_slots(weapon_manager.get_slots())
-    hud.close_upgrade_choices()
-    choosing_upgrade = false
+func _all_offers_bought() -> bool:
+    for offer in shop_offers:
+        if not offer["bought"]:
+            return false
+    return true
+
+func _on_reroll_shop() -> void:
+    if not shop_open:
+        return
+    if shop_free_rerolls > 0:
+        shop_free_rerolls -= 1
+        shop_message = "FREE REROLL"
+    elif gold >= REROLL_COST:
+        gold -= REROLL_COST
+        shop_message = "REROLLED"
+    else:
+        shop_message = "NOT ENOUGH GOLD"
+        hud.refresh_shop(_shop_data())
+        return
+    _generate_offers()
+    hud.set_gold(gold)
+    hud.refresh_shop(_shop_data())
+
+func _on_sell_weapon(weapon_id: String) -> void:
+    if not shop_open:
+        return
+    var quality: int = weapon_manager.get_weapon_quality(weapon_id)
+    if quality <= 0:
+        return
+    var price := int(float(_offer_price("weapon", quality)) * 0.5 * sell_mult)
+    weapon_manager.sell_weapon(weapon_id)
+    gold += price
+    shop_message = "SOLD FOR %dg" % price
+    _apply_item_stats()
+    hud.set_gold(gold)
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.refresh_shop(_shop_data())
+
+func _on_sell_item(item_id: String) -> void:
+    if not shop_open:
+        return
+    var quality: int = weapon_manager.get_item_quality(item_id)
+    if quality <= 0:
+        return
+    var price := int(float(_offer_price("item", quality)) * 0.5 * sell_mult)
+    weapon_manager.sell_item(item_id)
+    gold += price
+    shop_message = "SOLD FOR %dg" % price
+    _apply_item_stats()
+    hud.set_gold(gold)
+    hud.set_item_slots(weapon_manager.get_item_slots())
+    hud.refresh_shop(_shop_data())
+
+func _on_next_wave() -> void:
+    if not shop_open:
+        return
+    shop_open = false
     get_tree().paused = false
-    _start_wave(wave + 1)
+    hud.hide_shop()
+    wave += 1
+    _start_wave(wave)
+
+func _apply_item_stats() -> void:
+    var stats: Dictionary = weapon_manager.get_item_stats()
+    pickup_radius = float(stats["pickup_radius"])
+    gold_mult = float(stats["gold_mult"])
+    sell_mult = float(stats["sell_mult"])
+    player.move_speed = 320.0 + float(stats["move_speed_bonus"])
+    var new_max := 100 + int(stats["max_health_bonus"])
+    if new_max != player.max_health:
+        var gained: int = new_max - int(player.max_health)
+        player.max_health = new_max
+        if gained > 0:
+            player.health += gained
+        player.health = clampi(player.health, 0, new_max)
+    player.health_changed.emit(player.health, player.max_health)
+    hud.set_health(player.health, player.max_health)
+
+func _on_stage_clear() -> void:
+    stage_clear = true
+    get_tree().paused = true
+    if stage_index >= 0:
+        if stage_index + 1 < STAGE_IDS.size():
+            max_unlocked = maxi(max_unlocked, stage_index + 1)
+        else:
+            max_unlocked = STAGE_IDS.size()
+        if stage_id == "3-1":
+            endless_unlocked = true
+        _save_progress()
+        next_stage_id = STAGE_IDS[stage_index + 1] if stage_index + 1 < STAGE_IDS.size() else ""
+    else:
+        next_stage_id = ""
+    var clear_text := "%s · WAVE %d CLEARED\nGOLD %dg" % [_stage_label(), wave, gold]
+    if next_stage_id == "" and not is_endless:
+        clear_text += "\nCAMPAIGN COMPLETE"
+    hud.show_stage_clear(
+        _stage_label(),
+        next_stage_id != "",
+        clear_text
+    )
 
 func _on_player_died() -> void:
+    if game_over:
+        return
     game_over = true
     wave_active = false
-    choosing_upgrade = false
+    if is_endless:
+        best_endless_wave = maxi(best_endless_wave, wave)
+        _save_progress()
+    hud.show_game_over(
+        _stage_label(),
+        "REACHED WAVE %d\nGOLD %dg\nBEST ENDLESS %d" % [wave, gold, best_endless_wave]
+    )
     Fx.clear_effects()
-    for enemy in enemies.get_children():
-        if enemy.has_method("stop"):
-            enemy.stop()
     weapon_manager.visible = false
     for projectile in projectiles.get_children():
         projectile.queue_free()
-    hud.show_game_over(elapsed, wave, TOTAL_WAVES, best_wave)
-    Audio.play("game_over", -4.0)
     get_tree().paused = true
+
+func _on_stage_selected(id: String) -> void:
+    RunState.selected_stage = id
+    RunState.endless = false
+    get_tree().paused = false
+    get_tree().reload_current_scene()
+
+func _on_endless_selected() -> void:
+    RunState.selected_stage = ""
+    RunState.endless = true
+    get_tree().paused = false
+    get_tree().reload_current_scene()
+
+func _on_next_stage() -> void:
+    if next_stage_id == "":
+        return
+    RunState.selected_stage = next_stage_id
+    RunState.endless = false
+    get_tree().paused = false
+    get_tree().reload_current_scene()
+
+func _on_retry_stage() -> void:
+    RunState.selected_stage = stage_id
+    RunState.endless = is_endless
+    get_tree().paused = false
+    get_tree().reload_current_scene()
+
+func _on_stage_select() -> void:
+    RunState.clear()
+    get_tree().paused = false
+    get_tree().reload_current_scene()
+
+func _stage_select_data() -> Dictionary:
+    var stages: Array = []
+    for index in range(STAGE_IDS.size()):
+        var parts: PackedStringArray = STAGE_IDS[index].split("-")
+        stages.append({
+            "id": STAGE_IDS[index],
+            "label": STAGE_IDS[index],
+            "chapter": int(parts[0]),
+            "stage": int(parts[1]),
+            "locked": index > max_unlocked,
+            "cleared": index < max_unlocked,
+        })
+    return {
+        "stages": stages,
+        "endless_unlocked": endless_unlocked,
+        "best_endless": best_endless_wave,
+    }
+
+func _load_progress() -> void:
+    var config := ConfigFile.new()
+    if config.load(save_path) == OK:
+        max_unlocked = int(config.get_value("campaign", "max_unlocked", 0))
+        endless_unlocked = bool(config.get_value("campaign", "endless_unlocked", false))
+        best_endless_wave = int(config.get_value("campaign", "best_endless_wave", 0))
+
+func _save_progress() -> void:
+    var config := ConfigFile.new()
+    config.set_value("campaign", "max_unlocked", max_unlocked)
+    config.set_value("campaign", "endless_unlocked", endless_unlocked)
+    config.set_value("campaign", "best_endless_wave", best_endless_wave)
+    config.save(save_path)
+
+func _collect_all_coins() -> void:
+    for coin in get_tree().get_nodes_in_group("coin"):
+        if is_instance_valid(coin):
+            gold += int(float(coin.value) * gold_mult)
+            coin.queue_free()
+    hud.set_gold(gold)
+
+func _clear_arena() -> void:
+    for enemy in enemies.get_children():
+        enemy.queue_free()
+    for projectile in projectiles.get_children():
+        projectile.queue_free()
+    for coin in get_tree().get_nodes_in_group("coin"):
+        coin.queue_free()
+
+func _clear_enemies() -> void:
+    for enemy in enemies.get_children():
+        enemy.queue_free()
+    for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
+        projectile.queue_free()
 
 func _on_shake_requested(strength: float, duration: float) -> void:
     shake_strength = maxf(shake_strength, strength)
@@ -274,125 +739,109 @@ func _update_shake(delta: float) -> void:
     else:
         camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake_strength
 
-func _restart() -> void:
-    get_tree().paused = false
-    get_tree().reload_current_scene()
-
-func _unhandled_input(event: InputEvent) -> void:
-    if (game_over or victory) and event is InputEventKey and event.pressed and not event.echo:
-        if event.keycode == KEY_R or event.keycode == KEY_ENTER:
-            _restart()
-
-func _build_choices() -> Array:
-    var weapon_cards: Array = weapon_manager.get_cards()
-    var stat_cards := _stat_cards()
-    var choices: Array = []
-    var used_ids := {}
-
-    if not weapon_cards.is_empty():
-        var new_cards: Array = []
-        for card in weapon_cards:
-            if card["kind"] == "weapon_new":
-                new_cards.append(card)
-        var guaranteed: Dictionary
-        if weapon_manager.get_equipped_count() < 2 and not new_cards.is_empty():
-            guaranteed = new_cards.pick_random()
-        else:
-            guaranteed = weapon_cards.pick_random()
-        choices.append(guaranteed)
-        used_ids[guaranteed["id"]] = true
-
-    var pool: Array = []
-    for card in weapon_cards:
-        if not used_ids.has(card["id"]):
-            pool.append(card)
-    for card in stat_cards:
-        pool.append(card)
-    pool.shuffle()
-
-    for card in pool:
-        if choices.size() >= 3:
-            break
-        if used_ids.has(card["id"]):
-            continue
-        choices.append(card)
-        used_ids[card["id"]] = true
-
-    return choices
-
-func _stat_cards() -> Array:
-    var cards: Array = []
-    for key in UPGRADE_POOL.keys():
-        var id := str(key)
-        if player.can_apply_upgrade(id):
-            cards.append({
-                "id": "stat:" + id,
-                "title": UPGRADE_POOL[id]["title"],
-                "kind": "stat",
-            })
-    return cards
-
-func _load_best_wave() -> void:
-    var config := ConfigFile.new()
-    if config.load(save_path) == OK:
-        best_wave = int(config.get_value("progress", "best_wave", 0))
-
-func _record_wave(value: int) -> void:
-    if value <= best_wave:
-        return
-    best_wave = value
-    hud.set_best_wave(best_wave)
-    var config := ConfigFile.new()
-    config.set_value("progress", "best_wave", best_wave)
-    var error := config.save(save_path)
-    if error != OK:
-        push_warning("Failed to save best wave: %s" % error)
-
 func _draw() -> void:
     var view_size := get_viewport_rect().size
     var grid_color := Color(0.10, 0.18, 0.20, 0.55)
     var step := 80.0
-
     var x := 0.0
     while x <= view_size.x:
         draw_line(Vector2(x, 0.0), Vector2(x, view_size.y), grid_color, 1.0)
         x += step
-
     var y := 0.0
     while y <= view_size.y:
         draw_line(Vector2(0.0, y), Vector2(view_size.x, y), grid_color, 1.0)
         y += step
+    draw_rect(Rect2(20.0, 20.0, view_size.x - 40.0, view_size.y - 40.0), Color(0.15, 0.75, 0.70, 0.45), false, 3.0)
 
-    draw_rect(
-        Rect2(20.0, 20.0, view_size.x - 40.0, view_size.y - 40.0),
-        Color(0.15, 0.75, 0.70, 0.45),
-        false,
-        3.0
-    )
+func _capture_screenshot() -> void:
+    await get_tree().create_timer(0.6).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_stage_select.png")
+
+    _begin_run("1-1", false)
+    await get_tree().create_timer(1.6).timeout
+    weapon_manager.buy_weapon("peony", 2)
+    weapon_manager.buy_weapon("maple", 2)
+    weapon_manager.buy_weapon("justice", 1)
+    weapon_manager.buy_weapon("vigil", 3)
+    weapon_manager.buy_item("magnet", 1)
+    weapon_manager.buy_item("boots", 2)
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.set_item_slots(weapon_manager.get_item_slots())
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_battle.png")
+
+    gold = 100
+    hud.set_gold(gold)
+    wave_time_left = 0.05
+    await get_tree().create_timer(0.5).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_shop.png")
+
+    shop_open = false
+    get_tree().paused = false
+    hud.hide_shop()
+    _start_wave(4)
+    await get_tree().create_timer(0.8).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_treasure.png")
+
+    _start_wave(8)
+    await get_tree().create_timer(1.0).timeout
+    var boss = get_tree().get_first_node_in_group("boss")
+    if boss != null:
+        boss.max_health = 99999
+        boss.health = 99999
+        hud.set_boss_health(99999, 99999)
+    await get_tree().create_timer(3.0).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_boss.png")
+
+    for enemy in enemies.get_children():
+        enemy.queue_free()
+    weapon_manager.visible = false
+    Fx.clear_effects()
+    stage_clear = true
+    get_tree().paused = true
+    hud.show_stage_clear("1-1", true, "WAVE 16 CLEARED\nGOLD 100g")
+    await get_tree().create_timer(0.2).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_clear.png")
+    DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_shop.png m5_treasure.png m5_boss.png m5_clear.png")
+    get_tree().quit(0)
+
+func _save_screenshot(path: String) -> Error:
+    var image := get_viewport().get_texture().get_image()
+    var error := image.save_png(path)
+    if error != OK:
+        push_error("SCREENSHOT_FAILED " + path + ": " + str(error))
+    return error
 
 func _run_smoke_test() -> void:
     await get_tree().process_frame
     await get_tree().process_frame
-
-    if player == null:
-        _fail_smoke_test("player missing")
+    if not hud.is_stage_select_visible():
+        _fail_test("stage select missing")
         return
-    if not Audio.has_sound("shoot") or Audio.get_sound_names().size() < 11:
-        _fail_smoke_test("audio sounds missing")
+    if hud.get_stage_button("1-1") == null:
+        _fail_test("stage 1-1 button missing")
         return
 
-    # Keep wave 1 open while input tests run; the test enemy closes it later.
-    enemies_remaining_to_spawn = 1
-    spawn_timer = 1.0e9
-    for enemy in enemies.get_children():
-        enemy.queue_free()
+    _begin_run("1-1", false)
     await get_tree().process_frame
+    await get_tree().process_frame
+    if player == null or not player.visible:
+        _fail_test("player not active")
+        return
+    if wave != 1 or shop_open or get_tree().paused:
+        _fail_test("run did not start at wave 1")
+        return
 
     var joystick = get_tree().get_first_node_in_group("virtual_joystick")
     if joystick == null:
-        _fail_smoke_test("virtual joystick missing")
+        _fail_test("virtual joystick missing")
         return
-
     var input_mode := "windowed"
     if DisplayServer.get_name() == "headless":
         input_mode = "headless_vector"
@@ -401,27 +850,24 @@ func _run_smoke_test() -> void:
         await get_tree().create_timer(0.35).timeout
         joystick.set_test_vector(Vector2.ZERO)
         if player.global_position.x <= start_position.x + 20.0:
-            _fail_smoke_test("headless vector movement failed")
+            _fail_test("headless vector movement failed")
             return
     else:
         var joystick_rect: Rect2 = joystick.get_global_rect()
         if joystick_rect.size.x < 10.0:
-            _fail_smoke_test("virtual joystick layout missing")
+            _fail_test("virtual joystick layout missing")
             return
         var joystick_center := joystick_rect.position + joystick_rect.size * 0.5
-
         var mouse_start: Vector2 = player.global_position
         await _simulate_drag(joystick_center, Vector2(90.0, 0.0), false)
         if player.global_position.x <= mouse_start.x + 20.0:
-            _fail_smoke_test("mouse joystick did not move player")
+            _fail_test("mouse joystick did not move player")
             return
-
         var touch_start: Vector2 = player.global_position
         await _simulate_drag(joystick_center, Vector2(90.0, 0.0), true)
         if player.global_position.x <= touch_start.x + 20.0:
-            _fail_smoke_test("touch joystick did not move player")
+            _fail_test("touch joystick did not move player")
             return
-
         var keyboard_start: Vector2 = player.global_position
         var key_press := InputEventKey.new()
         key_press.keycode = KEY_D
@@ -436,7 +882,7 @@ func _run_smoke_test() -> void:
         Input.parse_input_event(key_release)
         await get_tree().process_frame
         if player.global_position.x <= keyboard_start.x + 10.0:
-            _fail_smoke_test("keyboard did not move player")
+            _fail_test("keyboard did not move player")
             return
 
     var dash_button: Button = hud.get_node("Root/DashButton")
@@ -444,15 +890,26 @@ func _run_smoke_test() -> void:
     await _click_button(dash_button)
     await get_tree().create_timer(0.2).timeout
     if player.get_dash_cooldown_remaining() <= 0.0:
-        _fail_smoke_test("dash cooldown did not start")
+        _fail_test("dash cooldown did not start")
         return
     if player.global_position.distance_to(dash_start) <= 20.0:
-        _fail_smoke_test("dash did not move player")
+        _fail_test("dash did not move player")
         return
 
+    wave_time_left = 9999.0
+    spawn_timer = 1.0e9
+    _clear_enemies()
     player.global_position = Vector2(640.0, 360.0)
     player.health = player.max_health
     player.health_changed.emit(player.health, player.max_health)
+
+    var gold_before_coin := gold
+    _on_enemy_died(player.global_position, 1)
+    await get_tree().create_timer(0.5).timeout
+    if gold <= gold_before_coin:
+        _fail_test("coin pickup did not grant gold")
+        return
+
     var shooter = SHOOTER_SCENE.instantiate()
     shooter.max_health = 500
     shooter.move_speed = 80.0
@@ -461,15 +918,14 @@ func _run_smoke_test() -> void:
     shooter.global_position = Vector2(890.0, 360.0)
     await get_tree().create_timer(3.5).timeout
     if shooter.shots_fired <= 0:
-        _fail_smoke_test("shooter did not fire")
+        _fail_test("shooter did not fire")
         return
     if player.health >= player.max_health:
-        _fail_smoke_test("shooter projectile did not hit player")
+        _fail_test("shooter projectile did not hit player")
         return
     shooter.queue_free()
     for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
-        if is_instance_valid(projectile):
-            projectile.queue_free()
+        projectile.queue_free()
     await get_tree().process_frame
 
     player.global_position = Vector2(640.0, 360.0)
@@ -483,202 +939,236 @@ func _run_smoke_test() -> void:
     exploder.global_position = Vector2(940.0, 360.0)
     await get_tree().create_timer(4.5).timeout
     if player.health >= player.max_health:
-        _fail_smoke_test("exploder did not damage player")
+        _fail_test("exploder did not damage player")
         return
     if is_instance_valid(exploder) and not exploder.is_queued_for_deletion():
         exploder.queue_free()
     for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
-        if is_instance_valid(projectile):
-            projectile.queue_free()
+        projectile.queue_free()
     await get_tree().process_frame
     player.health = player.max_health
     player.health_changed.emit(player.health, player.max_health)
 
-    player.global_position = Vector2(640.0, 360.0)
-    enemies_remaining_to_spawn = 0
-    var test_enemy := ENEMY_SCENE.instantiate()
-    enemies.add_child(test_enemy)
-    test_enemy.global_position = Vector2(750.0, 360.0)
-    await get_tree().create_timer(2.2).timeout
-
-    if is_instance_valid(test_enemy) and not test_enemy.is_queued_for_deletion():
-        _fail_smoke_test("auto attack did not kill test enemy")
+    _clear_enemies()
+    wave_time_left = 0.05
+    await get_tree().create_timer(0.5).timeout
+    if not shop_open or not hud.is_shop_visible():
+        _fail_test("shop did not open after wave")
+        return
+    var has_starter := false
+    for offer in shop_offers:
+        if offer["kind"] == "weapon" and int(offer["quality"]) == 1:
+            has_starter = true
+            break
+    if not has_starter:
+        _fail_test("starter weapon offer missing")
         return
 
-    var upgrade_count := 0
-    var evolution_count := 0
-    var click_retries := 0
-    for expected_wave in range(1, TOTAL_WAVES):
-        if expected_wave > 1:
-            _force_clear_wave()
-            await get_tree().process_frame
-            await get_tree().process_frame
-
-        await get_tree().process_frame
-        if not choosing_upgrade:
-            _fail_smoke_test("wave %d upgrade choice missing" % expected_wave)
-            return
-        if not get_tree().paused:
-            _fail_smoke_test("tree not paused during upgrade")
-            return
-        if not hud.is_upgrade_panel_visible():
-            _fail_smoke_test("upgrade panel missing")
-            return
-
-        var choice_ids: Array = hud.get_choice_ids()
-        if choice_ids.is_empty():
-            _fail_smoke_test("wave %d has no choices" % expected_wave)
-            return
-        var available_weapon_cards: Array = weapon_manager.get_cards()
-        if not available_weapon_cards.is_empty():
-            var has_weapon_choice := false
-            for choice_id in choice_ids:
-                var id_text := str(choice_id)
-                if id_text.begins_with("weapon:") or id_text.begins_with("upgrade:"):
-                    has_weapon_choice = true
-                    break
-            if not has_weapon_choice:
-                _fail_smoke_test("wave %d has no guaranteed weapon card" % expected_wave)
-                return
-
-        var chosen_index := 0
-        for index in range(choice_ids.size()):
-            var id_text := str(choice_ids[index])
-            if id_text.begins_with("weapon:") or id_text.begins_with("upgrade:"):
-                chosen_index = index
-                break
-
-        var before_stats := _upgrade_snapshot()
-        var before_build: String = weapon_manager.get_build_signature()
-        await _click_upgrade_choice(chosen_index, expected_wave % 2 == 0)
-        await get_tree().process_frame
-
-        if get_tree().paused and hud.is_evolution_mode():
-            evolution_count += 1
-            await _click_upgrade_choice(0, expected_wave % 2 == 0)
-            await get_tree().process_frame
-            if get_tree().paused:
-                click_retries += 1
-                await get_tree().create_timer(0.15).timeout
-                await _click_upgrade_choice(0, expected_wave % 2 == 0)
-                await get_tree().process_frame
-        elif get_tree().paused:
-            click_retries += 1
-            await get_tree().create_timer(0.15).timeout
-            await _click_upgrade_choice(chosen_index, expected_wave % 2 == 0)
-            await get_tree().process_frame
-
-        if get_tree().paused:
-            _fail_smoke_test("wave %d still paused after upgrade" % expected_wave)
-            return
-        if wave != expected_wave + 1:
-            _fail_smoke_test("wave %d did not start" % (expected_wave + 1))
-            return
-        if _upgrade_snapshot() == before_stats and weapon_manager.get_build_signature() == before_build:
-            _fail_smoke_test("wave %d upgrade had no effect" % expected_wave)
-            return
-        upgrade_count += 1
-
-    if wave != TOTAL_WAVES:
-        _fail_smoke_test("boss wave not reached")
+    gold = 100
+    hud.set_gold(gold)
+    hud.refresh_shop(_shop_data())
+    var offer_button: Button = null
+    for index in range(4):
+        var button: Button = hud.get_shop_offer_button(index)
+        if button != null and button.visible and not button.disabled:
+            offer_button = button
+            break
+    if offer_button == null:
+        _fail_test("no buyable shop offer")
+        return
+    var gold_before_buy := gold
+    var build_before_buy: String = weapon_manager.get_build_signature()
+    await _click_button(offer_button)
+    await get_tree().create_timer(0.2).timeout
+    if gold >= gold_before_buy:
+        _fail_test("shop purchase did not cost gold")
+        return
+    if weapon_manager.get_build_signature() == build_before_buy:
+        _fail_test("shop purchase did not change build")
         return
 
-    await get_tree().create_timer(0.8).timeout
+    var merge_type := ""
+    for weapon_type in weapon_manager.get_weapon_types():
+        if weapon_manager.get_weapon_quality(str(weapon_type)) == 0:
+            merge_type = str(weapon_type)
+            break
+    if merge_type == "":
+        _fail_test("no weapon type available for merge test")
+        return
+    weapon_manager.buy_weapon(merge_type, 1)
+    weapon_manager.buy_weapon(merge_type, 1)
+    if weapon_manager.get_weapon_quality(merge_type) < 2:
+        _fail_test("weapon merge did not upgrade quality")
+        return
+    weapon_manager.sell_weapon(merge_type)
+    if weapon_manager.get_weapon_quality(merge_type) != 0:
+        _fail_test("weapon sell failed")
+        return
+
+    var item_type := ""
+    for candidate in ["jade", "magnet", "boots", "holy_fire"]:
+        if weapon_manager.get_item_quality(candidate) == 0:
+            item_type = candidate
+            break
+    if item_type == "":
+        _fail_test("no item available for effect test")
+        return
+    var item_before: Dictionary = weapon_manager.get_item_stats()
+    weapon_manager.buy_item(item_type, 1)
+    _apply_item_stats()
+    if weapon_manager.get_item_quality(item_type) < 1:
+        _fail_test("item purchase failed")
+        return
+    if item_type == "jade" and gold_mult <= 1.0:
+        _fail_test("jade effect did not apply")
+        return
+    if item_type == "magnet" and pickup_radius <= float(item_before["pickup_radius"]):
+        _fail_test("magnet effect did not apply")
+        return
+    if item_type == "boots" and player.move_speed <= 320.0:
+        _fail_test("boots effect did not apply")
+        return
+    if item_type == "holy_fire":
+        if player.max_health <= 100:
+            _fail_test("holy fire effect did not apply")
+            return
+        if player.health != player.max_health:
+            _fail_test("holy fire did not heal")
+            return
+    weapon_manager.sell_item(item_type)
+    _apply_item_stats()
+
+    var gold_before_reroll := gold
+    await _click_button(hud.get_reroll_button())
+    await get_tree().create_timer(0.2).timeout
+    if gold != gold_before_reroll - REROLL_COST:
+        _fail_test("shop reroll did not cost gold")
+        return
+
+    await _click_button(hud.get_next_wave_button())
+    await get_tree().create_timer(0.3).timeout
+    if shop_open or get_tree().paused:
+        _fail_test("next wave did not leave shop")
+        return
+    if wave != 2:
+        _fail_test("next wave did not advance")
+        return
+
+    _start_wave(4)
+    await get_tree().create_timer(0.4).timeout
+    var treasures := get_tree().get_nodes_in_group("treasure")
+    if treasures.is_empty():
+        _fail_test("wave 4 treasure imp missing")
+        return
+    var gold_before_treasure := gold
+    treasures[0].take_damage(999999)
+    await get_tree().create_timer(0.2).timeout
+    if coins.get_child_count() < 6 and gold <= gold_before_treasure:
+        _fail_test("treasure imp coin drop missing")
+        return
+    _clear_arena()
+
+    _start_wave(8)
+    await get_tree().create_timer(0.9).timeout
     var boss = get_tree().get_first_node_in_group("boss")
-    if boss == null:
-        _fail_smoke_test("boss missing")
+    if boss == null or not hud.is_boss_bar_visible():
+        _fail_test("wave 8 boss missing")
         return
-    if not hud.is_boss_bar_visible():
-        _fail_smoke_test("boss bar missing")
-        return
-
-    var boss_health_before: int = boss.health
-    boss.take_damage(100)
+    boss._spawn_minions()
     await get_tree().process_frame
-    if boss.health >= boss_health_before:
-        _fail_smoke_test("boss did not take damage")
+    var minion_hooked := false
+    for node in enemies.get_children():
+        if node == boss or not node.has_signal("died"):
+            continue
+        if node.died.get_connections().size() > 0:
+            minion_hooked = true
+            break
+    if not minion_hooked:
+        _fail_test("boss minion coin hook missing")
         return
     boss.take_damage(999999)
+    await get_tree().create_timer(0.6).timeout
+    if not shop_open:
+        _fail_test("shop missing after wave 8 boss")
+        return
+    await _click_button(hud.get_next_wave_button())
+    await get_tree().create_timer(0.3).timeout
+    if wave != 9:
+        _fail_test("wave 9 did not start")
+        return
+
+    _start_wave(16)
+    await get_tree().create_timer(0.9).timeout
+    boss = get_tree().get_first_node_in_group("boss")
+    if boss == null:
+        _fail_test("wave 16 boss missing")
+        return
+    boss.take_damage(999999)
+    await get_tree().create_timer(0.6).timeout
+    if not stage_clear or not hud.is_end_panel_visible():
+        _fail_test("stage clear panel missing")
+        return
+    if max_unlocked < 1 or next_stage_id != "1-2":
+        _fail_test("stage unlock missing")
+        return
+
+    stage_id = "3-1"
+    stage_index = 8
+    _on_stage_clear()
+    if not endless_unlocked:
+        _fail_test("endless not unlocked after 3-1")
+        return
+    stage_id = "3-4"
+    stage_index = STAGE_IDS.size() - 1
+    _on_stage_clear()
+    if max_unlocked != STAGE_IDS.size():
+        _fail_test("final stage clear not recorded")
+        return
+    var config := ConfigFile.new()
+    if config.load(save_path) != OK:
+        _fail_test("campaign save missing")
+        return
+    if not bool(config.get_value("campaign", "endless_unlocked", false)):
+        _fail_test("campaign save content wrong")
+        return
+
+    _begin_run("", true)
     await get_tree().process_frame
     await get_tree().process_frame
-
-    if hud.is_boss_bar_visible():
-        _fail_smoke_test("boss bar not hidden after death")
+    if not is_endless or wave != 1:
+        _fail_test("endless run did not start")
         return
-    if not victory:
-        _fail_smoke_test("victory missing")
+    wave_time_left = 0.05
+    spawn_timer = 1.0e9
+    _clear_enemies()
+    await get_tree().create_timer(0.5).timeout
+    if not shop_open:
+        _fail_test("endless shop missing")
         return
-    if not get_tree().paused:
-        _fail_smoke_test("tree not paused on victory")
-        return
-    if not hud.is_end_panel_visible():
-        _fail_smoke_test("end panel missing on victory")
-        return
-
-    var saved_config := ConfigFile.new()
-    if saved_config.load(save_path) != OK:
-        _fail_smoke_test("best wave save missing")
-        return
-    if int(saved_config.get_value("progress", "best_wave", 0)) != TOTAL_WAVES:
-        _fail_smoke_test("best wave not saved")
-        return
-    best_wave = 0
-    _load_best_wave()
-    if best_wave != TOTAL_WAVES:
-        _fail_smoke_test("best wave not loaded")
+    await _click_button(hud.get_next_wave_button())
+    await get_tree().create_timer(0.3).timeout
+    if wave != 2:
+        _fail_test("endless wave did not advance")
         return
 
-    get_tree().paused = false
-    player.take_damage(999)
-    await get_tree().process_frame
-    if not game_over:
-        _fail_smoke_test("game over state missing")
+    if Audio.get_sound_names().size() < 17:
+        _fail_test("audio sounds missing")
         return
-    if not hud.is_end_panel_visible():
-        _fail_smoke_test("end panel missing on game over")
-        return
-
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    var final_build: String = weapon_manager.get_build_signature()
-    print("SMOKE_TEST_PASS input=%s dash=true enemies=true waves=10 upgrades=%d evolutions=%d retries=%d build=%s boss=true victory=true death=true audio=true save_load=true" % [input_mode, upgrade_count, evolution_count, click_retries, final_build])
+    print("SMOKE_TEST_PASS input=%s stage_select=true shop=true merge=true coins=true enemies=true boss8=true stage_clear=true endless=true build=%s" % [input_mode, weapon_manager.get_build_signature()])
     get_tree().quit(0)
 
-func _fail_smoke_test(reason: String) -> void:
+func _fail_test(reason: String) -> void:
     push_error("SMOKE_TEST_FAIL: " + reason)
     get_tree().quit(1)
-
-func _upgrade_snapshot() -> Array:
-    return [
-        player.projectile_damage,
-        player.attack_interval,
-        player.move_speed,
-        player.max_health,
-        player.projectile_count,
-        player.lifesteal,
-    ]
-
-func _force_clear_wave() -> void:
-    enemies_remaining_to_spawn = 0
-    for enemy in enemies.get_children():
-        enemy.queue_free()
-    for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
-        if is_instance_valid(projectile):
-            projectile.queue_free()
-
-func _click_upgrade_choice(index: int, use_touch := false) -> void:
-    var button: Button = hud.get_node("Root/UpgradePanel/Center/VBox/Choices/Choice%d" % (index + 1))
-    await get_tree().create_timer(0.1).timeout
-    await _click_button(button, use_touch)
 
 func _click_button(button: Button, use_touch := false) -> void:
     if DisplayServer.get_name() == "headless":
         button.pressed.emit()
         await get_tree().process_frame
         return
-
     var rect := button.get_global_rect()
     var center := rect.position + rect.size * 0.5
-
     if use_touch:
         var touch_press := InputEventScreenTouch.new()
         touch_press.index = 0
@@ -695,7 +1185,6 @@ func _click_button(button: Button, use_touch := false) -> void:
         await get_tree().process_frame
         await get_tree().process_frame
         return
-
     var motion := InputEventMouseMotion.new()
     motion.position = center
     Input.parse_input_event(motion)
@@ -729,9 +1218,7 @@ func _simulate_drag(center: Vector2, offset: Vector2, is_touch: bool) -> void:
         mouse_press.pressed = true
         mouse_press.position = center
         Input.parse_input_event(mouse_press)
-
     await get_tree().process_frame
-
     if is_touch:
         var touch_drag := InputEventScreenDrag.new()
         touch_drag.index = 0
@@ -744,9 +1231,7 @@ func _simulate_drag(center: Vector2, offset: Vector2, is_touch: bool) -> void:
         mouse_drag.relative = offset
         mouse_drag.button_mask = MOUSE_BUTTON_MASK_LEFT
         Input.parse_input_event(mouse_drag)
-
     await get_tree().create_timer(0.35).timeout
-
     if is_touch:
         var touch_release := InputEventScreenTouch.new()
         touch_release.index = 0
@@ -759,112 +1244,4 @@ func _simulate_drag(center: Vector2, offset: Vector2, is_touch: bool) -> void:
         mouse_release.pressed = false
         mouse_release.position = center + offset
         Input.parse_input_event(mouse_release)
-
     await get_tree().process_frame
-
-func _capture_screenshot() -> void:
-    await get_tree().create_timer(2.5).timeout
-    await RenderingServer.frame_post_draw
-    var first_error := _save_screenshot("res://screenshots/m4_screenshot.png")
-
-    _force_clear_wave()
-    await get_tree().process_frame
-    await get_tree().process_frame
-    await get_tree().create_timer(0.3).timeout
-    await RenderingServer.frame_post_draw
-    var second_error := _save_screenshot("res://screenshots/m4_upgrade_screenshot.png")
-
-    choosing_upgrade = false
-    victory = false
-    get_tree().paused = false
-    hud.close_upgrade_choices()
-
-    weapon_manager.add_weapon("turret")
-    weapon_manager.upgrade_weapon("turret")
-    var turret_evolution: Dictionary = weapon_manager.upgrade_weapon("turret")
-    hud.set_weapon_slots(weapon_manager.get_slots())
-    hud.show_evolution_choices("TURRET", turret_evolution["choices"])
-    get_tree().paused = true
-    await get_tree().create_timer(0.2).timeout
-    await RenderingServer.frame_post_draw
-    var third_error := _save_screenshot("res://screenshots/m4_evolution_screenshot.png")
-    weapon_manager.apply_evolution("turret", "turret:laser")
-
-    _add_evolved_weapon("orbiter", "orbiter:fire")
-    _add_evolved_weapon("chain", "chain:storm")
-    _add_evolved_weapon("pierce", "pierce:railgun")
-    hud.set_weapon_slots(weapon_manager.get_slots())
-    hud.close_upgrade_choices()
-    get_tree().paused = false
-    wave_active = false
-
-    _start_wave(7)
-    await get_tree().create_timer(0.5).timeout
-    var demo_shooter = SHOOTER_SCENE.instantiate()
-    demo_shooter.max_health = 2000
-    demo_shooter.move_speed = 80.0
-    enemies.add_child(demo_shooter)
-    demo_shooter.global_position = Vector2(380.0, 240.0)
-    var demo_exploder = EXPLODER_SCENE.instantiate()
-    demo_exploder.max_health = 2000
-    demo_exploder.move_speed = 70.0
-    enemies.add_child(demo_exploder)
-    demo_exploder.global_position = Vector2(900.0, 240.0)
-    await get_tree().create_timer(2.8).timeout
-    await RenderingServer.frame_post_draw
-    var fourth_error := _save_screenshot("res://screenshots/m4_enemies_screenshot.png")
-
-    _start_wave(TOTAL_WAVES)
-    await get_tree().create_timer(0.8).timeout
-    var boss = get_tree().get_first_node_in_group("boss")
-    if boss != null:
-        boss.max_health = 99999
-        boss.health = 99999
-        hud.set_boss_health(99999, 99999)
-    await get_tree().create_timer(3.4).timeout
-    await RenderingServer.frame_post_draw
-    var fifth_error := _save_screenshot("res://screenshots/m4_build_screenshot.png")
-
-    choosing_upgrade = false
-    victory = false
-    wave_active = false
-    for enemy in enemies.get_children():
-        enemy.queue_free()
-    await get_tree().process_frame
-    await get_tree().process_frame
-    victory = true
-    weapon_manager.visible = false
-    Fx.clear_effects()
-    for projectile in projectiles.get_children():
-        projectile.queue_free()
-    get_tree().paused = true
-    hud.set_wave(TOTAL_WAVES, TOTAL_WAVES)
-    hud.set_enemy_count(0)
-    hud.set_remaining(0)
-    hud.set_time(120.0)
-    hud.set_best_wave(TOTAL_WAVES)
-    hud.show_victory(120.0, TOTAL_WAVES, TOTAL_WAVES)
-    await get_tree().create_timer(0.2).timeout
-    await RenderingServer.frame_post_draw
-    var sixth_error := _save_screenshot("res://screenshots/m4_end_screenshot.png")
-    DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-
-    if first_error == OK and second_error == OK and third_error == OK and fourth_error == OK and fifth_error == OK and sixth_error == OK:
-        print("SCREENSHOT_SAVED m4_screenshot.png m4_upgrade_screenshot.png m4_evolution_screenshot.png m4_enemies_screenshot.png m4_build_screenshot.png m4_end_screenshot.png")
-        get_tree().quit(0)
-    else:
-        get_tree().quit(1)
-
-func _add_evolved_weapon(weapon_type: String, evolution_id: String) -> void:
-    weapon_manager.add_weapon(weapon_type)
-    weapon_manager.upgrade_weapon(weapon_type)
-    var result: Dictionary = weapon_manager.upgrade_weapon(weapon_type)
-    if not result.is_empty():
-        weapon_manager.apply_evolution(weapon_type, evolution_id)
-
-func _save_screenshot(path: String) -> Error:
-    var image := get_viewport().get_texture().get_image()
-    var error := image.save_png(path)
-    if error != OK:
-        push_error("SCREENSHOT_FAILED " + path + ": " + str(error))
-    return error

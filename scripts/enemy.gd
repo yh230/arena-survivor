@@ -1,5 +1,7 @@
 extends CharacterBody2D
 
+signal died(drop_position: Vector2, coin_count: int)
+
 @export var max_health := 30
 @export var move_speed := 110.0
 @export var contact_damage := 8
@@ -48,6 +50,7 @@ func take_damage(amount: int) -> void:
     if health <= 0:
         Audio.play("enemy_die", -10.0)
         Fx.burst(global_position, Color("#f87171"), 8)
+        died.emit(global_position, 1)
         queue_free()
 
 func stop() -> void:

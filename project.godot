@@ -11,6 +11,7 @@ config/icon="res://icon.svg"
 
 Audio="*res://scripts/audio_manager.gd"
 Fx="*res://scripts/fx.gd"
+RunState="*res://scripts/run_state.gd"
 
 [display]
 

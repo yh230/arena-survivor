@@ -2,6 +2,7 @@ extends CharacterBody2D
 
 signal health_changed(current: int, maximum: int)
 signal defeated
+signal minion_spawned(minion)
 
 const MINION_SCENE := preload("res://scenes/enemy.tscn")
 
@@ -59,6 +60,7 @@ func _spawn_minions() -> void:
         get_parent().add_child(minion)
         minion.global_position = global_position + Vector2.from_angle(angle) * 90.0
         minion.move_speed = 120.0
+        minion_spawned.emit(minion)
 
 func take_damage(amount: int) -> void:
     if health <= 0:

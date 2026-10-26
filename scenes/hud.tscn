@@ -21,10 +21,10 @@ layout_mode = 1
 anchors_preset = 0
 offset_left = 24.0
 offset_top = 18.0
-offset_right = 520.0
-offset_bottom = 270.0
+offset_right = 560.0
+offset_bottom = 286.0
 mouse_filter = 2
-theme_override_constants/separation = 6
+theme_override_constants/separation = 4
 
 [node name="HealthLabel" type="Label" parent="Root/Stats"]
 layout_mode = 2
@@ -32,35 +32,41 @@ theme_override_colors/font_color = Color(0.80, 1.00, 0.95, 1)
 theme_override_font_sizes/font_size = 28
 text = "HP 100 / 100"
 
+[node name="StageLabel" type="Label" parent="Root/Stats"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.45, 0.95, 0.90, 1)
+theme_override_font_sizes/font_size = 24
+text = "STAGE 1-1"
+
 [node name="WaveLabel" type="Label" parent="Root/Stats"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.55, 0.95, 1.00, 1)
 theme_override_font_sizes/font_size = 24
-text = "WAVE 1 / 3"
+text = "WAVE 1 / 16"
+
+[node name="GoldLabel" type="Label" parent="Root/Stats"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.98, 0.85, 0.45, 1)
+theme_override_font_sizes/font_size = 22
+text = "GOLD 0"
+
+[node name="TimerLabel" type="Label" parent="Root/Stats"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.86, 0.92, 1)
+theme_override_font_sizes/font_size = 22
+text = "TIME 20s"
 
 [node name="EnemyLabel" type="Label" parent="Root/Stats"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.98, 0.75, 0.75, 1)
-theme_override_font_sizes/font_size = 22
+theme_override_font_sizes/font_size = 20
 text = "ENEMIES 0"
-
-[node name="RemainingLabel" type="Label" parent="Root/Stats"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.92, 0.70, 0.70, 1)
-theme_override_font_sizes/font_size = 20
-text = "LEFT 0"
-
-[node name="TimeLabel" type="Label" parent="Root/Stats"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.72, 0.86, 0.92, 1)
-theme_override_font_sizes/font_size = 20
-text = "TIME 0s"
 
 [node name="BestLabel" type="Label" parent="Root/Stats"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.98, 0.85, 0.45, 1)
-theme_override_font_sizes/font_size = 20
-text = "BEST WAVE 0"
+theme_override_font_sizes/font_size = 18
+text = "BEST ENDLESS 0"
 
 [node name="TipLabel" type="Label" parent="Root"]
 layout_mode = 1
@@ -140,18 +146,18 @@ anchor_top = 1.0
 anchor_right = 0.5
 anchor_bottom = 1.0
 offset_left = -360.0
-offset_top = -80.0
+offset_top = -150.0
 offset_right = 360.0
-offset_bottom = -18.0
+offset_bottom = -112.0
 mouse_filter = 2
-theme_override_constants/separation = 10
+theme_override_constants/separation = 8
 alignment = 1
 
 [node name="Slot1" type="Label" parent="Root/WeaponSlots"]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.65, 0.85, 0.90, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 text = "EMPTY"
 horizontal_alignment = 1
 
@@ -159,7 +165,7 @@ horizontal_alignment = 1
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.65, 0.85, 0.90, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 text = "EMPTY"
 horizontal_alignment = 1
 
@@ -167,7 +173,7 @@ horizontal_alignment = 1
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.65, 0.85, 0.90, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
 text = "EMPTY"
 horizontal_alignment = 1
 
@@ -175,7 +181,86 @@ horizontal_alignment = 1
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_colors/font_color = Color(0.65, 0.85, 0.90, 1)
-theme_override_font_sizes/font_size = 16
+theme_override_font_sizes/font_size = 14
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot5" type="Label" parent="Root/WeaponSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.65, 0.85, 0.90, 1)
+theme_override_font_sizes/font_size = 14
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot6" type="Label" parent="Root/WeaponSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.65, 0.85, 0.90, 1)
+theme_override_font_sizes/font_size = 14
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="ItemSlots" type="HBoxContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -360.0
+offset_top = -104.0
+offset_right = 360.0
+offset_bottom = -66.0
+mouse_filter = 2
+theme_override_constants/separation = 8
+alignment = 1
+
+[node name="Slot1" type="Label" parent="Root/ItemSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.70, 0.80, 0.75, 1)
+theme_override_font_sizes/font_size = 13
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot2" type="Label" parent="Root/ItemSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.70, 0.80, 0.75, 1)
+theme_override_font_sizes/font_size = 13
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot3" type="Label" parent="Root/ItemSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.70, 0.80, 0.75, 1)
+theme_override_font_sizes/font_size = 13
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot4" type="Label" parent="Root/ItemSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.70, 0.80, 0.75, 1)
+theme_override_font_sizes/font_size = 13
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot5" type="Label" parent="Root/ItemSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.70, 0.80, 0.75, 1)
+theme_override_font_sizes/font_size = 13
+text = "EMPTY"
+horizontal_alignment = 1
+
+[node name="Slot6" type="Label" parent="Root/ItemSlots"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_colors/font_color = Color(0.70, 0.80, 0.75, 1)
+theme_override_font_sizes/font_size = 13
 text = "EMPTY"
 horizontal_alignment = 1
 
@@ -196,7 +281,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.02, 0.03, 0.04, 0.78)
+color = Color(0.02, 0.03, 0.04, 0.98)
 mouse_filter = 2
 
 [node name="Center" type="CenterContainer" parent="Root/EndPanel"]
@@ -216,84 +301,20 @@ alignment = 1
 [node name="Title" type="Label" parent="Root/EndPanel/Center/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(1.00, 0.45, 0.45, 1)
-theme_override_font_sizes/font_size = 64
+theme_override_font_sizes/font_size = 60
 text = "GAME OVER"
 horizontal_alignment = 1
 
 [node name="Stats" type="Label" parent="Root/EndPanel/Center/VBox"]
 layout_mode = 2
 theme_override_colors/font_color = Color(0.90, 0.95, 1.00, 1)
-theme_override_font_sizes/font_size = 26
-text = "Reached wave 0 / 3"
+theme_override_font_sizes/font_size = 24
+text = ""
 horizontal_alignment = 1
 
 [node name="RestartButton" type="Button" parent="Root/EndPanel/Center/VBox"]
 custom_minimum_size = Vector2(220, 56)
 layout_mode = 2
 size_flags_horizontal = 4
-theme_override_font_sizes/font_size = 24
-text = "RESTART"
-
-[node name="UpgradePanel" type="Control" parent="Root"]
-visible = false
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 0
-
-[node name="Backdrop" type="ColorRect" parent="Root/UpgradePanel"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-color = Color(0.02, 0.03, 0.04, 0.82)
-mouse_filter = 2
-
-[node name="Center" type="CenterContainer" parent="Root/UpgradePanel"]
-layout_mode = 1
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-
-[node name="VBox" type="VBoxContainer" parent="Root/UpgradePanel/Center"]
-layout_mode = 2
-theme_override_constants/separation = 22
-alignment = 1
-
-[node name="Title" type="Label" parent="Root/UpgradePanel/Center/VBox"]
-layout_mode = 2
-theme_override_colors/font_color = Color(0.75, 1.00, 0.95, 1)
-theme_override_font_sizes/font_size = 44
-text = "CHOOSE ONE UPGRADE"
-horizontal_alignment = 1
-
-[node name="Choices" type="VBoxContainer" parent="Root/UpgradePanel/Center/VBox"]
-layout_mode = 2
-size_flags_horizontal = 4
-theme_override_constants/separation = 14
-
-[node name="Choice1" type="Button" parent="Root/UpgradePanel/Center/VBox/Choices"]
-custom_minimum_size = Vector2(520, 64)
-layout_mode = 2
 theme_override_font_sizes/font_size = 22
-text = "UPGRADE"
-
-[node name="Choice2" type="Button" parent="Root/UpgradePanel/Center/VBox/Choices"]
-custom_minimum_size = Vector2(520, 64)
-layout_mode = 2
-theme_override_font_sizes/font_size = 22
-text = "UPGRADE"
-
-[node name="Choice3" type="Button" parent="Root/UpgradePanel/Center/VBox/Choices"]
-custom_minimum_size = Vector2(520, 64)
-layout_mode = 2
-theme_override_font_sizes/font_size = 22
-text = "UPGRADE"
+text = "RETRY"
