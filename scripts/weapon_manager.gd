@@ -8,21 +8,21 @@ const QUALITY_DAMAGE := [0.0, 1.0, 1.35, 1.8, 2.4]
 const QUALITY_COOLDOWN := [0.0, 1.0, 0.92, 0.84, 0.76]
 const WEAPON_ORDER := ["peony", "maple", "justice", "vigil", "hammer", "elixir"]
 const WEAPON_DATA := {
-    "peony": {"title": "牡丹炮台", "desc": "自动部署炮台"},
-    "maple": {"title": "枫叶环刃", "desc": "环绕飞刃"},
-    "justice": {"title": "正义连锁", "desc": "连锁闪电"},
-    "vigil": {"title": "守夜炮", "desc": "穿透射线"},
-    "hammer": {"title": "爆裂重锤", "desc": "范围重击"},
-    "elixir": {"title": "致命灵药", "desc": "持续毒雾"},
+    "peony": {"title": "牡丹炮台", "desc": "自动部署炮台", "legendary": "传说：炮台发射贯穿激光"},
+    "maple": {"title": "枫叶环刃", "desc": "环绕飞刃", "legendary": "传说：环绕刃留下火焰轨迹"},
+    "justice": {"title": "正义连锁", "desc": "连锁闪电", "legendary": "传说：连锁目标提升至 8 个"},
+    "vigil": {"title": "守夜炮", "desc": "穿透射线", "legendary": "传说：射线穿透全部敌人"},
+    "hammer": {"title": "爆裂重锤", "desc": "范围重击", "legendary": "传说：冲击范围扩大并增伤"},
+    "elixir": {"title": "致命灵药", "desc": "持续毒雾", "legendary": "传说：毒雾范围扩大并增伤"},
 }
 const ITEM_ORDER := ["magnet", "boots", "holy_fire", "lucky_cat", "anvil", "jade"]
 const ITEM_DATA := {
-    "magnet": {"title": "磁铁", "desc": "扩大拾取范围"},
-    "boots": {"title": "疾行靴", "desc": "提升移动速度"},
-    "holy_fire": {"title": "圣火", "desc": "提升生命上限"},
-    "lucky_cat": {"title": "招财猫", "desc": "出售与金币收益提升"},
-    "anvil": {"title": "铁砧", "desc": "商店免费刷新"},
-    "jade": {"title": "翡翠", "desc": "金币收益提升"},
+    "magnet": {"title": "磁铁", "desc": "拾取范围 +35/级"},
+    "boots": {"title": "疾行靴", "desc": "移动速度 +25/级"},
+    "holy_fire": {"title": "圣火", "desc": "生命上限 +15/级"},
+    "lucky_cat": {"title": "招财猫", "desc": "售价 +10% / 金币 +3% 每级"},
+    "anvil": {"title": "铁砧", "desc": "每级 1 次免费刷新"},
+    "jade": {"title": "翡翠", "desc": "金币收益 +10%/级"},
 }
 
 var player = null
@@ -499,6 +499,11 @@ func get_weapon_desc(weapon_type: String) -> String:
         return ""
     return WEAPON_DATA[weapon_type]["desc"]
 
+func get_weapon_legendary_desc(weapon_type: String) -> String:
+    if not WEAPON_DATA.has(weapon_type):
+        return ""
+    return str(WEAPON_DATA[weapon_type].get("legendary", ""))
+
 func get_item_title(item_id: String) -> String:
     if not ITEM_DATA.has(item_id):
         return ""
@@ -592,18 +597,18 @@ func get_item_stats() -> Dictionary:
             continue
         match item_id:
             "magnet":
-                stats["pickup_radius"] += 40.0 * float(quality)
+                stats["pickup_radius"] += 35.0 * float(quality)
             "boots":
-                stats["move_speed_bonus"] += 30.0 * float(quality)
+                stats["move_speed_bonus"] += 25.0 * float(quality)
             "holy_fire":
-                stats["max_health_bonus"] += 20 * quality
+                stats["max_health_bonus"] += 15 * quality
             "lucky_cat":
-                stats["sell_mult"] += 0.15 * float(quality)
-                stats["gold_mult"] += 0.05 * float(quality)
+                stats["sell_mult"] += 0.10 * float(quality)
+                stats["gold_mult"] += 0.03 * float(quality)
             "anvil":
                 stats["free_rerolls"] += quality
             "jade":
-                stats["gold_mult"] += 0.15 * float(quality)
+                stats["gold_mult"] += 0.10 * float(quality)
     return stats
 
 func get_weapon_slots() -> Array:

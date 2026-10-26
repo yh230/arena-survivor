@@ -7,6 +7,8 @@ signal died(drop_position: Vector2, coin_count: int)
 @export var contact_damage := 8
 @export var contact_interval := 0.8
 @export var contact_range := 36.0
+@export var coin_drop := 1
+@export var elite := false
 
 var health := 30
 var player = null
@@ -50,7 +52,7 @@ func take_damage(amount: int) -> void:
     if health <= 0:
         Audio.play("enemy_die", -10.0)
         Fx.burst(global_position, Color("#f87171"), 8)
-        died.emit(global_position, 1)
+        died.emit(global_position, coin_drop)
         queue_free()
 
 func stop() -> void:
@@ -64,6 +66,8 @@ func _draw() -> void:
 
     draw_circle(Vector2.ZERO, 16.0, body_color)
     draw_circle(Vector2.ZERO, 9.0, Color("#7f1d1d"))
+    if elite:
+        draw_arc(Vector2.ZERO, 23.0, 0.0, TAU, 40, Color("#fbbf24"), 2.5, true)
 
     var ratio: float = clampf(float(health) / float(max_health), 0.0, 1.0)
     draw_rect(Rect2(-18.0, -28.0, 36.0, 5.0), Color(0.0, 0.0, 0.0, 0.65))

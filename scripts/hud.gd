@@ -23,6 +23,9 @@ var combat_ui: Control
 var stats_panel: Panel
 var health_label: Label
 var hp_bar: ProgressBar
+var hp_flash: ColorRect
+var wave_banner: Label
+var notice_label: Label
 var stage_tag_label: Label
 var stage_label: Label
 var wave_label: Label
@@ -44,6 +47,7 @@ var dash_title: Label
 var dash_sub: Label
 
 var stage_panel: Control
+var stage_content: Control
 var stage_buttons: Dictionary = {}
 var stage_cards: Dictionary = {}
 var stage_progress_cells: Array = []
@@ -55,6 +59,7 @@ var endless_desc: Label
 var endless_state: Label
 
 var shop_panel: Control
+var shop_content: Control
 var shop_offer_buttons: Array = []
 var shop_offer_uis: Array = []
 var shop_weapon_buttons: Array = []
@@ -63,6 +68,7 @@ var shop_item_buttons: Array = []
 var shop_item_uis: Array = []
 var shop_gold_label: Label
 var shop_gold_line: Label
+var shop_health_label: Label
 var shop_message_label: Label
 var shop_reroll_button: Button
 var shop_next_button: Button
@@ -70,6 +76,7 @@ var shop_weapon_count: Label
 var shop_item_count: Label
 
 var end_panel: Control
+var end_box: VBoxContainer
 var end_title: Label
 var end_sub: Label
 var end_seal: Panel
@@ -80,7 +87,25 @@ var end_select_button: Button
 var restart_button: Button
 
 var _gold_tween: Tween
+var _gold_count_tween: Tween
 var _last_gold := -1
+var _display_gold := 0
+var _hp_flash_tween: Tween
+var _low_hp_tween: Tween
+var _last_health := 100
+var _wave_banner_tween: Tween
+var _notice_tween: Tween
+var _panel_tweens: Dictionary = {}
+var _stage_card_tween: Tween
+var _stage_current_tween: Tween
+var _current_stage_id := ""
+var _last_track_wave := -1
+var _dash_was_ready := true
+var _animate_offers := false
+var _offer_entrance_tween: Tween
+var _last_offer_bought: Array = []
+var _shop_last_gold := -1
+var _shop_last_health := -1
 var _last_weapon_qualities := {}
 var _last_item_qualities := {}
 var _enemy_count := 0
@@ -126,6 +151,58 @@ func _content_box(panel: Panel, px: int, separation: int = 5) -> VBoxContainer:
     margin.add_child(box)
     return box
 
+func _animate_panel(panel: Control, content: Control, key: String) -> void:
+    var old: Tween = _panel_tweens.get(key, null)
+    if old != null and old.is_valid():
+        old.kill()
+    panel.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    var home := content.position
+    content.position = home + Vector2(0.0, 10.0)
+    var tween := create_tween().set_parallel(true)
+    tween.tween_property(panel, "modulate:a", 1.0, 0.16).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    tween.tween_property(content, "position", home, 0.18).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    _panel_tweens[key] = tween
+
+func _fade_panel(panel: Control, key: String) -> void:
+    var old: Tween = _panel_tweens.get(key, null)
+    if old != null and old.is_valid():
+        old.kill()
+    panel.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    var tween := create_tween()
+    tween.tween_property(panel, "modulate:a", 1.0, 0.16).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    _panel_tweens[key] = tween
+
+func _pulse_control(node: Control, amount := 1.06, duration := 0.18) -> void:
+    node.pivot_offset = node.size * 0.5
+    node.scale = Vector2(amount, amount)
+    var tween := create_tween()
+    tween.tween_property(node, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+func _float_combat_text(text: String, color: Color, anchor: Vector2, size := 14) -> void:
+    var node := UI.outlined(UI.label(text, size, color, true), Color(0.01, 0.02, 0.03, 0.9), 3)
+    node.position = anchor
+    combat_ui.add_child(node)
+    var tween := create_tween().set_parallel(true)
+    tween.tween_property(node, "position:y", node.position.y - 26.0, 0.6).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    tween.tween_property(node, "modulate:a", 0.0, 0.6)
+    tween.finished.connect(node.queue_free)
+
+func show_notice(text: String) -> void:
+    if notice_label == null:
+        return
+    notice_label.text = text
+    notice_label.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    if _notice_tween != null and _notice_tween.is_valid():
+        _notice_tween.kill()
+    _notice_tween = create_tween()
+    _notice_tween.tween_property(notice_label, "modulate:a", 1.0, 0.12)
+    _notice_tween.tween_interval(0.85)
+    _notice_tween.tween_property(notice_label, "modulate:a", 0.0, 0.3)
+
+func show_heal_feedback(amount: int) -> void:
+    _flash_health(Color(0.35, 1.0, 0.65, 0.34))
+    _float_combat_text("+%d" % amount, Color("#8affc1"), health_label.global_position + Vector2(96.0, -6.0), 14)
+
 # ---------------------------------------------------------------------------
 # Combat HUD
 # ---------------------------------------------------------------------------
@@ -154,6 +231,22 @@ func _build_combat_ui() -> void:
     tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     combat_ui.add_child(tip_label)
 
+    wave_banner = UI.outlined(UI.label("", 30, UI.BRASS_LIGHT, true), Color(0.01, 0.02, 0.03, 0.9), 5)
+    wave_banner.position = Vector2(0.0, 188.0)
+    wave_banner.size = Vector2(1280.0, 44.0)
+    wave_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    wave_banner.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    wave_banner.modulate.a = 0.0
+    combat_ui.add_child(wave_banner)
+
+    notice_label = UI.outlined(UI.label("", 18, Color("#ffe4a3"), true), Color(0.01, 0.02, 0.03, 0.9), 4)
+    notice_label.position = Vector2(0.0, 246.0)
+    notice_label.size = Vector2(1280.0, 30.0)
+    notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    notice_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    notice_label.modulate.a = 0.0
+    combat_ui.add_child(notice_label)
+
 func _build_stats_panel() -> void:
     stats_panel = Panel.new()
     stats_panel.position = Vector2(24.0, 24.0)
@@ -180,6 +273,11 @@ func _build_stats_panel() -> void:
     hp_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.02, 0.05, 0.06, 1.0), Color(0.13, 0.25, 0.26, 1.0), 7, 1))
     hp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.TEAL, UI.TEAL, 7, 0))
+    hp_flash = ColorRect.new()
+    hp_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    hp_flash.color = Color(1.0, 1.0, 1.0, 0.0)
+    hp_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hp_bar.add_child(hp_flash)
     box.add_child(hp_bar)
 
     var stage_row := HBoxContainer.new()
@@ -456,11 +554,37 @@ func _on_dash_pressed() -> void:
     dash_requested.emit()
 
 func set_health(current: int, maximum: int) -> void:
+    var previous := _last_health
+    _last_health = current
     health_label.text = "%d / %d" % [current, maximum]
     hp_bar.max_value = maximum
     hp_bar.value = current
     var low := maximum > 0 and float(current) / float(maximum) <= 0.3
     hp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.RED if low else UI.TEAL, Color("#ff9a8f") if low else UI.TEAL, 7, 0))
+    if current < previous:
+        _flash_health(Color(1.0, 0.22, 0.18, 0.36))
+    elif current > previous:
+        _flash_health(Color(0.30, 1.0, 0.62, 0.30))
+    _update_low_health_pulse(low)
+
+func _flash_health(color: Color) -> void:
+    if hp_flash == null:
+        return
+    if _hp_flash_tween != null and _hp_flash_tween.is_valid():
+        _hp_flash_tween.kill()
+    hp_flash.color = color
+    _hp_flash_tween = create_tween()
+    _hp_flash_tween.tween_property(hp_flash, "color:a", 0.0, 0.28)
+
+func _update_low_health_pulse(low: bool) -> void:
+    if low and _low_hp_tween == null:
+        _low_hp_tween = create_tween().set_loops()
+        _low_hp_tween.tween_property(hp_bar, "modulate:a", 0.62, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+        _low_hp_tween.tween_property(hp_bar, "modulate:a", 1.0, 0.65).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+    elif not low and _low_hp_tween != null:
+        _low_hp_tween.kill()
+        _low_hp_tween = null
+        hp_bar.modulate.a = 1.0
 
 func get_health_text() -> String:
     return health_label.text
@@ -484,6 +608,22 @@ func set_wave(current: int, total: int) -> void:
         wave_label.text = "第 %d / %d 波" % [current, total]
         wave_track_label.text = "第 %d / %d 波" % [current, total]
     _update_wave_segments()
+    _show_wave_banner("第 %d 波" % current)
+
+func _show_wave_banner(text: String) -> void:
+    if wave_banner == null:
+        return
+    wave_banner.text = text
+    wave_banner.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    wave_banner.pivot_offset = wave_banner.size * 0.5
+    wave_banner.scale = Vector2(1.04, 1.04)
+    if _wave_banner_tween != null and _wave_banner_tween.is_valid():
+        _wave_banner_tween.kill()
+    _wave_banner_tween = create_tween().set_parallel(true)
+    _wave_banner_tween.tween_property(wave_banner, "modulate:a", 1.0, 0.15)
+    _wave_banner_tween.tween_property(wave_banner, "scale", Vector2.ONE, 0.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    _wave_banner_tween.chain().tween_interval(0.55)
+    _wave_banner_tween.chain().tween_property(wave_banner, "modulate:a", 0.0, 0.25)
 
 func _update_wave_segments() -> void:
     var current_in_track := ((_current_wave - 1) % 16) + 1
@@ -504,6 +644,12 @@ func _update_wave_segments() -> void:
         var height := 8.0 if (is_now or is_boss) else 5.0
         segment.size = Vector2(18.0, height)
         segment.position.y = 37.0 - height
+    if current_in_track != _last_track_wave:
+        _last_track_wave = current_in_track
+        var now_segment: ColorRect = wave_segments[current_in_track - 1]
+        now_segment.modulate = Color(1.6, 1.5, 1.3, 1.0)
+        var glow := create_tween()
+        glow.tween_property(now_segment, "modulate", Color.WHITE, 0.3)
 
 func set_wave_time(seconds: float, is_boss: bool) -> void:
     if is_boss:
@@ -516,14 +662,26 @@ func set_wave_time(seconds: float, is_boss: bool) -> void:
 func set_gold(value: int) -> void:
     if value == _last_gold:
         return
+    var had_previous := _last_gold >= 0
+    var previous := _display_gold
+    var delta := value - _last_gold
     _last_gold = value
-    gold_label.text = "金币 %d" % value
+    _display_gold = value
+    if _gold_count_tween != null and _gold_count_tween.is_valid():
+        _gold_count_tween.kill()
+    _gold_count_tween = create_tween()
+    _gold_count_tween.tween_method(_set_gold_text, float(previous), float(value), 0.25).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
     if _gold_tween != null and _gold_tween.is_valid():
         _gold_tween.kill()
     gold_label.modulate = Color.WHITE
     _gold_tween = create_tween()
     _gold_tween.tween_property(gold_label, "modulate", Color(1.18, 1.10, 0.82, 1.0), 0.08)
     _gold_tween.tween_property(gold_label, "modulate", Color.WHITE, 0.18)
+    if had_previous and delta > 0:
+        _float_combat_text("+%d" % delta, UI.BRASS_LIGHT, gold_label.global_position + Vector2(48.0, -16.0), 13)
+
+func _set_gold_text(value: float) -> void:
+    gold_label.text = "金币 %d" % int(round(value))
 
 func set_enemy_count(count: int) -> void:
     _enemy_count = count
@@ -537,6 +695,8 @@ func _update_sub_label() -> void:
     sub_label.text = "敌人 %d · 无尽最佳 %d" % [_enemy_count, _best_wave]
 
 func set_dash_state(ready: bool, remaining: float) -> void:
+    var ready_changed := ready != _dash_was_ready
+    _dash_was_ready = ready
     dash_button.disabled = not ready
     var ratio := 1.0
     if not ready:
@@ -545,6 +705,8 @@ func set_dash_state(ready: bool, remaining: float) -> void:
     dash_ring.queue_redraw()
     dash_title.add_theme_color_override("font_color", UI.TEXT if ready else UI.MUTED)
     dash_sub.text = "就绪" if ready else "%.1f 秒" % maxf(remaining, 0.0)
+    if ready and ready_changed:
+        _pulse_control(dash_ring, 1.06, 0.22)
 
 func set_weapon_slots(slots: Array) -> void:
     for index in range(weapon_slots.size()):
@@ -639,6 +801,12 @@ func show_boss_bar(current: int, maximum: int) -> void:
     boss_bar_value.max_value = maximum
     boss_bar_value.value = current
     boss_bar.visible = true
+    boss_bar.modulate.a = 0.0
+    boss_bar.pivot_offset = boss_bar.size * 0.5
+    boss_bar.scale = Vector2(0.96, 0.96)
+    var tween := create_tween().set_parallel(true)
+    tween.tween_property(boss_bar, "modulate:a", 1.0, 0.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    tween.tween_property(boss_bar, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 func set_boss_health(current: int, maximum: int) -> void:
     boss_bar_value.max_value = maximum
@@ -672,6 +840,7 @@ func _build_stage_select() -> void:
     content.size = Vector2(1120.0, 660.0)
     content.mouse_filter = Control.MOUSE_FILTER_IGNORE
     stage_panel.add_child(content)
+    stage_content = content
 
     var eyebrow := UI.label("机 关 百 炼", 12, UI.BRASS)
     eyebrow.position = Vector2(0.0, 0.0)
@@ -853,6 +1022,7 @@ func show_stage_select(data: Dictionary) -> void:
     var chapter_names: Array = data.get("chapter_names", [])
     var current_index := int(data.get("current_index", -1))
     var cleared_count := int(data.get("cleared_count", 0))
+    _current_stage_id = ""
 
     stage_progress_label.text = "%d / %d" % [cleared_count, STAGE_COUNT]
     for index in range(stage_progress_cells.size()):
@@ -879,6 +1049,8 @@ func show_stage_select(data: Dictionary) -> void:
         var locked := bool(info.get("locked", true))
         var cleared := bool(info.get("cleared", false))
         var current := index == current_index
+        if current:
+            _current_stage_id = stage_id
 
         button.disabled = locked
         number_label.text = stage_id
@@ -935,6 +1107,44 @@ func show_stage_select(data: Dictionary) -> void:
     endless_state.add_theme_color_override("font_color", UI.TEAL if endless_unlocked else UI.MUTED)
 
     stage_panel.visible = true
+    _animate_panel(stage_panel, stage_content, "stage")
+    _animate_stage_cards()
+
+func _animate_stage_cards() -> void:
+    if _stage_card_tween != null and _stage_card_tween.is_valid():
+        _stage_card_tween.kill()
+    if _stage_current_tween != null and _stage_current_tween.is_valid():
+        _stage_current_tween.kill()
+    _stage_card_tween = create_tween().set_parallel(true)
+    var card_index := 0
+    for chapter_index in range(3):
+        for stage_index in range(4):
+            var stage_id := "%d-%d" % [chapter_index + 1, stage_index + 1]
+            if not stage_cards.has(stage_id):
+                continue
+            var ui: Dictionary = stage_cards[stage_id]
+            var card: Button = ui["button"]
+            var target_alpha := card.modulate.a
+            card.modulate.a = 0.0
+            card.scale = Vector2(0.97, 0.97)
+            card.pivot_offset = Vector2(134.0, 50.0)
+            var delay := float(card_index) * 0.02
+            _stage_card_tween.tween_property(card, "modulate:a", target_alpha, 0.16).set_delay(delay)
+            _stage_card_tween.tween_property(card, "scale", Vector2.ONE, 0.18).set_delay(delay).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+            var seal: Panel = ui["seal"]
+            if seal.visible:
+                seal.scale = Vector2(0.6, 0.6)
+                seal.pivot_offset = Vector2(14.0, 14.0)
+                _stage_card_tween.tween_property(seal, "scale", Vector2.ONE, 0.2).set_delay(delay + 0.05).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+            card_index += 1
+
+    if _current_stage_id != "" and stage_cards.has(_current_stage_id):
+        var current_card: Button = stage_cards[_current_stage_id]["button"]
+        current_card.pivot_offset = Vector2(134.0, 50.0)
+        _stage_current_tween = create_tween().set_loops()
+        _stage_current_tween.tween_interval(0.5)
+        _stage_current_tween.tween_property(current_card, "scale", Vector2(1.008, 1.008), 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+        _stage_current_tween.tween_property(current_card, "scale", Vector2.ONE, 0.8).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
 
 func _apply_stage_card_style(button: Button, current: bool, cleared: bool, locked: bool) -> void:
     var border := UI.DARK_LINE
@@ -952,6 +1162,10 @@ func _apply_stage_card_style(button: Button, current: bool, cleared: bool, locke
     button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.03, 0.06, 0.07, 0.72), Color(0.10, 0.15, 0.16, 0.9), 7, 1))
 
 func hide_stage_select() -> void:
+    if _stage_card_tween != null and _stage_card_tween.is_valid():
+        _stage_card_tween.kill()
+    if _stage_current_tween != null and _stage_current_tween.is_valid():
+        _stage_current_tween.kill()
     stage_panel.visible = false
     _set_gameplay_visible(true)
     _show_gameplay_inputs()
@@ -989,6 +1203,7 @@ func _build_shop() -> void:
     content.size = Vector2(1184.0, 660.0)
     content.mouse_filter = Control.MOUSE_FILTER_IGNORE
     shop_panel.add_child(content)
+    shop_content = content
 
     var eyebrow := UI.label("波 间 整 备", 12, UI.BRASS)
     eyebrow.position = Vector2(0.0, 0.0)
@@ -1017,6 +1232,12 @@ func _build_shop() -> void:
     shop_gold_label.size = Vector2(220.0, 38.0)
     shop_gold_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     content.add_child(shop_gold_label)
+
+    shop_health_label = UI.label("生命 100 / 100", 11, UI.MUTED)
+    shop_health_label.position = Vector2(964.0, 60.0)
+    shop_health_label.size = Vector2(220.0, 16.0)
+    shop_health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+    content.add_child(shop_health_label)
 
     var rule := ColorRect.new()
     rule.position = Vector2(0.0, 108.0)
@@ -1165,7 +1386,7 @@ func _build_shop() -> void:
     shop_reroll_button.text = "刷新 2 金币"
     shop_reroll_button.custom_minimum_size = Vector2(180.0, 52.0)
     UI.apply_button(shop_reroll_button, "ghost")
-    shop_reroll_button.pressed.connect(func() -> void: reroll_shop.emit())
+    shop_reroll_button.pressed.connect(_on_reroll_pressed)
     foot.add_child(shop_reroll_button)
 
     shop_next_button = Button.new()
@@ -1230,13 +1451,40 @@ func show_shop(data: Dictionary) -> void:
     stage_panel.visible = false
     end_panel.visible = false
     shop_panel.visible = true
+    _animate_offers = true
+    _shop_last_gold = -1
+    _shop_last_health = -1
+    _animate_panel(shop_panel, shop_content, "shop")
     refresh_shop(data)
 
 func refresh_shop(data: Dictionary) -> void:
     var gold := int(data.get("gold", 0))
+    var previous_shop_gold := _shop_last_gold
+    _shop_last_gold = gold
     shop_gold_label.text = str(gold)
     shop_gold_line.text = "金币 %d" % gold
     shop_message_label.text = str(data.get("message", ""))
+    if previous_shop_gold >= 0 and gold != previous_shop_gold:
+        _pulse_control(shop_gold_label, 1.08, 0.18)
+        _pulse_control(shop_gold_line, 1.05, 0.18)
+    var health := int(data.get("health", 100))
+    var max_health := maxi(1, int(data.get("max_health", 100)))
+    var low_health := float(health) / float(max_health) <= 0.3
+    shop_health_label.text = "生命 %d / %d" % [health, max_health]
+    shop_health_label.add_theme_color_override("font_color", UI.RED if low_health else UI.MUTED)
+    var heal_amount := int(data.get("heal_amount", 0))
+    if heal_amount > 0:
+        shop_health_label.modulate = Color(0.65, 1.35, 0.85, 1.0)
+        var heal_tween := create_tween()
+        heal_tween.tween_property(shop_health_label, "modulate", Color.WHITE, 0.45)
+    if _shop_last_health >= 0 and health != _shop_last_health:
+        _pulse_control(shop_health_label, 1.06, 0.18)
+    _shop_last_health = health
+    if _last_offer_bought.size() < shop_offer_buttons.size():
+        var old_size := _last_offer_bought.size()
+        _last_offer_bought.resize(shop_offer_buttons.size())
+        for index in range(old_size, _last_offer_bought.size()):
+            _last_offer_bought[index] = false
 
     var offers: Array = data.get("offers", [])
     for index in range(shop_offer_buttons.size()):
@@ -1270,26 +1518,46 @@ func refresh_shop(data: Dictionary) -> void:
         seal_label.text = UI.seal_glyph(str(offer.get("id", "")))
         seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.06, 0.11, 0.12, 0.95), qcolor, 26, 1))
         name_label.text = str(offer.get("title", offer.get("id", "")))
-        desc_label.text = str(offer.get("desc", ""))
+        var desc_text := str(offer.get("desc", ""))
+        var legendary_text := str(offer.get("legendary_desc", ""))
+        if quality >= 4 and legendary_text != "":
+            desc_label.text = legendary_text
+        else:
+            desc_label.text = desc_text
         owned_label.text = "已有 %s" % UI.quality_name(owned) if owned > 0 else ""
 
-        if bool(offer.get("bought", false)):
-            UI.set_badge(badge, "已售", UI.MUTED)
+        var bought_now := bool(offer.get("bought", false))
+        var was_bought := false
+        if index < _last_offer_bought.size() and _last_offer_bought[index] != null:
+            was_bought = _last_offer_bought[index] == true
+        var badge_text := "购买"
+        var badge_color := UI.BRASS
+        if bought_now:
+            badge_text = "已售"
+            badge_color = UI.MUTED
         elif reason != "":
-            UI.set_badge(badge, reason, UI.RED)
+            badge_text = reason
+            badge_color = UI.RED
         elif owned > 0 and quality == owned:
-            UI.set_badge(badge, "可升品", UI.TEAL)
+            badge_text = "可升品"
+            badge_color = UI.TEAL
         elif owned > 0 and quality > owned:
-            UI.set_badge(badge, "可升级", UI.TEAL)
-        else:
-            UI.set_badge(badge, "购买", UI.BRASS)
+            badge_text = "可升级"
+            badge_color = UI.TEAL
+        UI.set_badge(badge, badge_text, badge_color)
+        _pulse_badge(ui, badge_text)
 
         button.disabled = disabled
         button.modulate = Color(0.62, 0.62, 0.62, 0.8) if disabled else Color.WHITE
         _apply_offer_card_style(button, qcolor, disabled)
-        button.tooltip_text = name_label.text + " — " + desc_label.text
+        button.tooltip_text = name_label.text + " — " + desc_text
+        if quality >= 4 and legendary_text != "":
+            button.tooltip_text += "\n" + legendary_text
         if reason != "":
             button.tooltip_text += "\n" + reason
+        _last_offer_bought[index] = bought_now
+        if bought_now and not was_bought:
+            _flash_offer(button)
 
     _refresh_sell_slots(shop_weapon_uis, data.get("weapons", []), "weapon")
     _refresh_sell_slots(shop_item_uis, data.get("items", []), "item")
@@ -1310,6 +1578,53 @@ func refresh_shop(data: Dictionary) -> void:
         shop_reroll_button.text = "免费刷新 %d" % free_rerolls
     else:
         shop_reroll_button.text = "刷新 %d 金币" % int(data.get("reroll_cost", 2))
+    if _animate_offers:
+        _animate_offer_cards()
+        _animate_offers = false
+
+func _animate_offer_cards() -> void:
+    if _offer_entrance_tween != null and _offer_entrance_tween.is_valid():
+        _offer_entrance_tween.kill()
+    _offer_entrance_tween = create_tween().set_parallel(true)
+    for index in range(shop_offer_buttons.size()):
+        var button: Button = shop_offer_buttons[index]
+        if not button.visible:
+            continue
+        var target_alpha := 0.8 if button.disabled else 1.0
+        button.modulate.a = 0.0
+        button.scale = Vector2(0.97, 0.97)
+        button.pivot_offset = button.custom_minimum_size * 0.5
+        var delay := float(index) * 0.035
+        _offer_entrance_tween.tween_property(button, "modulate:a", target_alpha, 0.16).set_delay(delay)
+        _offer_entrance_tween.tween_property(button, "scale", Vector2.ONE, 0.18).set_delay(delay).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+func _flash_offer(button: Button) -> void:
+    var target_alpha := 0.8 if button.disabled else 1.0
+    var target := Color(button.modulate.r, button.modulate.g, button.modulate.b, target_alpha)
+    button.modulate = Color(1.35, 1.25, 0.82, target_alpha)
+    button.scale = Vector2(1.03, 1.03)
+    button.pivot_offset = button.custom_minimum_size * 0.5
+    var tween := create_tween().set_parallel(true)
+    tween.tween_property(button, "modulate", target, 0.2)
+    tween.tween_property(button, "scale", Vector2.ONE, 0.2).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+
+func _pulse_badge(ui: Dictionary, badge_text: String) -> void:
+    var badge: PanelContainer = ui["badge"]
+    var old: Tween = ui.get("badge_tween", null)
+    if old != null and old.is_valid():
+        old.kill()
+    badge.modulate = Color.WHITE
+    ui["badge_tween"] = null
+    if badge_text != "可升品" and badge_text != "可升级":
+        return
+    var tween := create_tween().set_loops()
+    tween.tween_property(badge, "modulate:a", 0.55, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+    tween.tween_property(badge, "modulate:a", 1.0, 0.7).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+    ui["badge_tween"] = tween
+
+func _on_reroll_pressed() -> void:
+    _animate_offers = true
+    reroll_shop.emit()
 
 func _apply_offer_card_style(button: Button, color: Color, disabled: bool) -> void:
     var bg := Color(0.05, 0.11, 0.12, 0.95)
@@ -1431,6 +1746,7 @@ func _build_end_panel() -> void:
     box.add_theme_constant_override("separation", 12)
     box.mouse_filter = Control.MOUSE_FILTER_IGNORE
     center.add_child(box)
+    end_box = box
 
     var kicker := UI.label("机 关 百 炼", 12, UI.BRASS)
     kicker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1518,6 +1834,7 @@ func show_stage_clear(stage: String, has_next: bool, stats: String, next_label :
     UI.apply_button(restart_button, "ghost")
     UI.apply_button(end_next_button, "primary")
     UI.apply_button(end_select_button, "ghost")
+    _animate_end_panel()
 
 func show_game_over(stage: String, stats: String) -> void:
     stage_panel.visible = false
@@ -1537,6 +1854,26 @@ func show_game_over(stage: String, stats: String) -> void:
     restart_button.text = "重试本关"
     UI.apply_button(restart_button, "primary")
     UI.apply_button(end_select_button, "ghost")
+    _animate_end_panel()
+
+func _animate_end_panel() -> void:
+    _fade_panel(end_panel, "end")
+    if end_seal.visible:
+        end_seal.modulate.a = 0.0
+        end_seal.scale = Vector2(0.6, 0.6)
+        end_seal.rotation = deg_to_rad(-18.0)
+        var seal_tween := create_tween().set_parallel(true)
+        seal_tween.tween_property(end_seal, "modulate:a", 1.0, 0.2)
+        seal_tween.tween_property(end_seal, "scale", Vector2.ONE, 0.26).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+        seal_tween.tween_property(end_seal, "rotation", deg_to_rad(-8.0), 0.26).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+    var buttons: Array = [end_next_button, end_select_button, restart_button]
+    for index in range(buttons.size()):
+        var button: Button = buttons[index]
+        if not button.visible:
+            continue
+        button.modulate.a = 0.0
+        var tween := create_tween()
+        tween.tween_property(button, "modulate:a", 1.0, 0.16).set_delay(0.12 + float(index) * 0.05)
 
 func _build_end_stats(stats: String) -> void:
     for child in end_stats_box.get_children():
@@ -1557,7 +1894,13 @@ func _build_end_stats(stats: String) -> void:
         value.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
         value.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
         margin.add_child(value)
+        card.modulate.a = 0.0
+        card.scale = Vector2(0.96, 0.96)
+        card.pivot_offset = Vector2(116.0, 39.0)
         end_stats_box.add_child(card)
+        var tween := create_tween().set_parallel(true)
+        tween.tween_property(card, "modulate:a", 1.0, 0.18).set_delay(float(index) * 0.04)
+        tween.tween_property(card, "scale", Vector2.ONE, 0.2).set_delay(float(index) * 0.04).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 func hide_end_panel() -> void:
     end_panel.visible = false

@@ -28,6 +28,7 @@ func _physics_process(delta: float) -> void:
         magnet_speed = move_toward(magnet_speed, 520.0, 1400.0 * delta)
         global_position += offset.normalized() * magnet_speed * delta
         if distance <= 18.0:
+            Fx.burst(global_position, Color("#f0b94a"), 4)
             collected.emit(value)
             queue_free()
 

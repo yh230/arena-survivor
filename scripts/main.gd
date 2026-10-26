@@ -18,7 +18,7 @@ const STAGE_NAMES := [
     ["赤沙门", "流沙阱", "风暴眼", "沙王座"],
     ["禁地门", "铜人阵", "天工台", "百炼殿"],
 ]
-const CHAPTER_MULT := [1.0, 1.25, 1.55]
+const CHAPTER_MULT := [1.0, 1.18, 1.38]
 const WAVES_PER_STAGE := 16
 const BOSS_WAVES := [8, 16]
 const START_GOLD := 15
@@ -57,6 +57,7 @@ var boss_spawn_timer := 0.0
 var boss_spawned := false
 var boss_wave := false
 var treasure_spawned := false
+var elite_spawned := false
 
 var gold := START_GOLD
 var pickup_radius := 60.0
@@ -65,6 +66,7 @@ var sell_mult := 1.0
 var shop_free_rerolls := 0
 var shop_message := ""
 var shop_offers: Array = []
+var last_heal_amount := 0
 var next_stage_id := ""
 
 var max_unlocked := 0
@@ -130,6 +132,9 @@ func _process(delta: float) -> void:
             _finish_wave()
             return
     else:
+        if not elite_spawned and _is_elite_wave(wave):
+            elite_spawned = true
+            _spawn_elite()
         if not treasure_spawned and wave % 8 == 4:
             treasure_spawned = true
             _spawn_treasure()
@@ -176,6 +181,7 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     gold = START_GOLD
     shop_offers.clear()
     shop_message = ""
+    last_heal_amount = 0
 
     _clear_arena()
     player.visible = true
@@ -224,13 +230,62 @@ func _stage_index(id: String) -> int:
 func _difficulty_mult() -> float:
     if is_endless:
         return 1.0 + float(wave) * 0.04
-    return CHAPTER_MULT[chapter - 1] + float(stage_number - 1) * 0.08
+    return CHAPTER_MULT[chapter - 1] + float(stage_number - 1) * 0.065
 
 func _wave_mult() -> float:
-    var value := 1.0 + float(wave - 1) * 0.06
+    var value := 1.0 + float(wave - 1) * 0.05
     if wave >= 12:
-        value *= 1.2
+        value *= 1.15
     return value
+
+func _quality_progress_for(stage_idx: int, endless: bool, wave_no: int) -> float:
+    if endless:
+        return clampf(float(wave_no) / 40.0, 0.0, 1.0)
+    return clampf(float(stage_idx) / 11.0, 0.0, 1.0)
+
+func _quality_progress() -> float:
+    return _quality_progress_for(stage_index, is_endless, wave)
+
+func _quality_chances(progress: float) -> Array:
+    var p := clampf(progress, 0.0, 1.0)
+    var q4 := 0.02 + 0.10 * p
+    var q3 := 0.10 + 0.18 * p
+    var q2 := 0.28 + 0.10 * p
+    var q1 := 1.0 - q4 - q3 - q2
+    return [q4, q3, q2, q1]
+
+func _quality_for_roll(roll: float, progress: float) -> int:
+    var chances: Array = _quality_chances(progress)
+    var cumulative := 0.0
+    for index in range(4):
+        cumulative += float(chances[index])
+        if roll < cumulative:
+            return 4 - index
+    return 1
+
+func _coin_value_for(wave_no: int) -> int:
+    return 1 + int(wave_no / 6)
+
+func _enemy_cap_for(wave_no: int) -> int:
+    if wave_no <= 2:
+        return 12
+    if wave_no <= 5:
+        return 22
+    return 32
+
+func _spawn_interval_for(wave_no: int, chapter_no: int) -> float:
+    var interval := maxf(0.42, 1.05 - float(wave_no) * 0.03 - float(chapter_no - 1) * 0.08)
+    if wave_no <= 2:
+        interval *= 1.35
+    if wave_no >= 12:
+        interval *= 0.8
+    return interval
+
+func _is_elite_wave(wave_no: int) -> bool:
+    return wave_no == 6 or wave_no == 14
+
+func _wave_heal_ratio(is_boss: bool) -> float:
+    return 0.20 if is_boss else 0.08
 
 func _start_wave(number: int) -> void:
     wave = number
@@ -242,6 +297,7 @@ func _start_wave(number: int) -> void:
     boss_spawned = false
     boss_spawn_timer = 0.6
     treasure_spawned = false
+    elite_spawned = false
     wave_time_left = 18.0 + float(chapter - 1) * 2.0
     spawn_timer = 0.6
     hud.hide_boss_bar()
@@ -255,36 +311,39 @@ func _start_wave(number: int) -> void:
     Audio.play("wave_start", -12.0)
 
 func _spawn_interval() -> float:
-    var interval := maxf(0.35, 1.05 - float(wave) * 0.03 - float(chapter - 1) * 0.08)
-    if wave <= 2:
-        interval *= 1.35
-    if wave >= 12:
-        interval *= 0.75
-    return interval
+    return _spawn_interval_for(wave, chapter)
 
 func _enemy_cap() -> int:
-    if wave <= 2:
-        return 12
-    if wave <= 5:
-        return 22
-    return 40
+    return _enemy_cap_for(wave)
 
 func _pick_enemy_type() -> String:
     if wave <= 2:
         return "chaser"
     var roll := randf()
-    var shooter_chance := 0.22 + float(chapter - 1) * 0.05
+    var shooter_chance := 0.20 + float(chapter - 1) * 0.04
     var exploder_chance := 0.0
     if wave >= 5:
-        exploder_chance = 0.16 + float(chapter - 1) * 0.05
+        exploder_chance = 0.12 + float(chapter - 1) * 0.05
     if wave >= 12:
-        shooter_chance += 0.08
-        exploder_chance += 0.08
+        shooter_chance += 0.04
+        exploder_chance += 0.04
     if roll < exploder_chance:
         return "exploder"
     if roll < exploder_chance + shooter_chance:
         return "shooter"
     return "chaser"
+
+func _edge_spawn_position() -> Vector2:
+    var view_size := get_viewport_rect().size
+    match randi() % 4:
+        0:
+            return Vector2(randf_range(0.0, view_size.x), -32.0)
+        1:
+            return Vector2(view_size.x + 32.0, randf_range(0.0, view_size.y))
+        2:
+            return Vector2(randf_range(0.0, view_size.x), view_size.y + 32.0)
+        _:
+            return Vector2(-32.0, randf_range(0.0, view_size.y))
 
 func _spawn_enemy() -> void:
     var enemy_type := _pick_enemy_type()
@@ -294,17 +353,7 @@ func _spawn_enemy() -> void:
     elif enemy_type == "exploder":
         scene = EXPLODER_SCENE
 
-    var view_size := get_viewport_rect().size
-    var pos := Vector2.ZERO
-    match randi() % 4:
-        0:
-            pos = Vector2(randf_range(0.0, view_size.x), -32.0)
-        1:
-            pos = Vector2(view_size.x + 32.0, randf_range(0.0, view_size.y))
-        2:
-            pos = Vector2(randf_range(0.0, view_size.x), view_size.y + 32.0)
-        _:
-            pos = Vector2(-32.0, randf_range(0.0, view_size.y))
+    var pos := _edge_spawn_position()
 
     var mult := _difficulty_mult() * _wave_mult()
     var enemy = scene.instantiate()
@@ -312,14 +361,14 @@ func _spawn_enemy() -> void:
         enemy.max_health = int((18.0 + float(wave) * 5.0) * mult)
         enemy.contact_damage = 5
         enemy.move_speed = randf_range(85.0, 110.0)
-        enemy.projectile_damage = 5 + int(wave / 3)
+        enemy.projectile_damage = 5 + int(wave / 4) + (chapter - 1) * 2
     elif enemy_type == "exploder":
         enemy.max_health = int((28.0 + float(wave) * 7.0) * mult)
         enemy.move_speed = randf_range(65.0, 90.0)
-        enemy.explosion_damage = 20 + wave * 2
+        enemy.explosion_damage = int(20.0 + float(wave) * 1.5 + float(chapter - 1) * 5.0)
     else:
         enemy.max_health = int((24.0 + float(wave) * 6.0) * mult)
-        enemy.contact_damage = 6 + int(wave / 3)
+        enemy.contact_damage = 6 + int(wave / 4) + (chapter - 1) * 2
         enemy.move_speed = randf_range(85.0, 125.0) + float(chapter) * 6.0
 
     enemies.add_child(enemy)
@@ -340,13 +389,32 @@ func _spawn_treasure() -> void:
     imp.died.connect(_on_enemy_died)
     Fx.burst(imp.global_position, Color("#fbbf24"), 12)
     Audio.play("wave_start", -18.0)
+    hud.show_notice("机关灵出现")
+
+func _spawn_elite() -> void:
+    var enemy = ENEMY_SCENE.instantiate()
+    var mult := _difficulty_mult() * _wave_mult()
+    enemy.max_health = int((24.0 + float(wave) * 6.0) * mult * 2.4)
+    enemy.move_speed = 72.0
+    enemy.contact_damage = int(float(6 + int(wave / 4) + (chapter - 1) * 2) * 1.3)
+    enemy.coin_drop = 4
+    enemy.elite = true
+    enemy.scale = Vector2(1.7, 1.7)
+    enemy.modulate = Color(1.0, 0.84, 0.55)
+    enemies.add_child(enemy)
+    enemy.global_position = _edge_spawn_position()
+    enemy.add_to_group("elite")
+    enemy.died.connect(_on_enemy_died)
+    Fx.burst(enemy.global_position, Color("#fbbf24"), 16)
+    Audio.play("wave_start", -16.0)
+    hud.show_notice("精英机关兵来袭")
 
 func _spawn_boss() -> void:
     var boss = BOSS_SCENE.instantiate()
     var mult := _difficulty_mult() * (1.4 if wave >= 16 else 1.0)
     boss.max_health = int(1000.0 * mult)
     boss.move_speed = 55.0
-    boss.contact_damage = 22
+    boss.contact_damage = 22 + (chapter - 1) * 3
     enemies.add_child(boss)
     boss.global_position = Vector2(get_viewport_rect().size.x * 0.5, -90.0)
     boss.health_changed.connect(hud.set_boss_health)
@@ -366,11 +434,11 @@ func _on_boss_minion_spawned(minion) -> void:
 func _on_boss_defeated() -> void:
     var boss = get_tree().get_first_node_in_group("boss")
     if boss != null:
-        _on_enemy_died(boss.global_position, 8)
+        _on_enemy_died(boss.global_position, 10)
     hud.hide_boss_bar()
 
 func _on_enemy_died(drop_position: Vector2, coin_count: int) -> void:
-    var base_value := 1 + int(wave / 5)
+    var base_value := _coin_value_for(wave)
     for index in range(coin_count):
         var coin = COIN_SCRIPT.new()
         coins.add_child(coin)
@@ -386,21 +454,37 @@ func _finish_wave() -> void:
     wave_active = false
     _collect_all_coins()
     _clear_enemies()
+    _heal_after_wave()
     if not is_endless and wave >= WAVES_PER_STAGE:
         _on_stage_clear()
         return
     _open_shop()
+
+func _heal_after_wave() -> void:
+    var amount := int(ceil(float(player.max_health) * _wave_heal_ratio(boss_wave)))
+    if amount <= 0:
+        return
+    var before: int = int(player.health)
+    player.health = mini(int(player.max_health), int(player.health) + amount)
+    if player.health != before:
+        last_heal_amount = player.health - before
+        player.health_changed.emit(player.health, player.max_health)
+        hud.show_heal_feedback(last_heal_amount)
 
 func _open_shop() -> void:
     shop_open = true
     get_tree().paused = true
     var stats: Dictionary = weapon_manager.get_item_stats()
     shop_free_rerolls = int(stats["free_rerolls"])
-    shop_message = "花费金币，然后开始下一波"
+    var heal_note := ""
+    if last_heal_amount > 0:
+        heal_note = "生命恢复 +%d · " % last_heal_amount
+    shop_message = heal_note + "花费金币，然后开始下一波"
     _generate_offers()
     if wave == 1:
         _ensure_starter_offer()
     hud.show_shop(_shop_data())
+    last_heal_amount = 0
 
 func _ensure_starter_offer() -> void:
     for offer in shop_offers:
@@ -428,8 +512,7 @@ func _generate_offers() -> void:
         var kind := "weapon" if randf() < 0.55 else "item"
         var id := ""
         if kind == "weapon":
-            var weapon_types: Array = weapon_manager.get_weapon_types()
-            id = weapon_types[randi() % weapon_types.size()]
+            id = _pick_weapon_type()
         else:
             var item_ids: Array = weapon_manager.get_item_ids()
             id = item_ids[randi() % item_ids.size()]
@@ -447,23 +530,23 @@ func _generate_offers() -> void:
             "bought": false,
         })
 
+func _pick_weapon_type() -> String:
+    var all_types: Array = weapon_manager.get_weapon_types()
+    if randf() < 0.35:
+        var owned_types: Array = []
+        for weapon_type in all_types:
+            var quality: int = weapon_manager.get_weapon_quality(str(weapon_type))
+            if quality > 0 and quality < 4:
+                owned_types.append(str(weapon_type))
+        if not owned_types.is_empty():
+            return str(owned_types[randi() % owned_types.size()])
+    return str(all_types[randi() % all_types.size()])
+
 func _roll_quality() -> int:
-    var stage_bonus := 0.0
-    if is_endless:
-        stage_bonus = minf(0.30, float(wave) * 0.006)
-    else:
-        stage_bonus = float(stage_index) * 0.018
-    var roll := randf() - stage_bonus
-    if roll < 0.02:
-        return 4
-    if roll < 0.12:
-        return 3
-    if roll < 0.40:
-        return 2
-    return 1
+    return _quality_for_roll(randf(), _quality_progress())
 
 func _offer_price(kind: String, quality: int) -> int:
-    var prices := [0, 10, 20, 40, 80] if kind == "weapon" else [0, 8, 16, 32, 64]
+    var prices := [0, 10, 22, 48, 96] if kind == "weapon" else [0, 8, 18, 38, 76]
     return prices[quality]
 
 func _shop_data() -> Dictionary:
@@ -498,6 +581,7 @@ func _shop_data() -> Dictionary:
         offers.append({
             "title": title,
             "desc": desc,
+            "legendary_desc": weapon_manager.get_weapon_legendary_desc(offer["id"]) if offer["kind"] == "weapon" else "",
             "quality": int(offer["quality"]),
             "quality_name": weapon_manager.get_quality_name(offer["quality"]),
             "quality_color": weapon_manager.get_quality_color(offer["quality"]),
@@ -519,6 +603,9 @@ func _shop_data() -> Dictionary:
             slot["sell_price"] = int(float(_offer_price("item", int(slot["quality"]))) * 0.5 * sell_mult)
     return {
         "gold": gold,
+        "health": player.health,
+        "max_health": player.max_health,
+        "heal_amount": last_heal_amount,
         "offers": offers,
         "weapons": weapons,
         "items": items,
@@ -823,6 +910,7 @@ func _capture_screenshot() -> void:
     await get_tree().create_timer(0.6).timeout
     max_unlocked = 1
     hud.show_stage_select(_stage_select_data())
+    await get_tree().create_timer(0.5).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_stage_select.png")
 
@@ -843,14 +931,13 @@ func _capture_screenshot() -> void:
     hud.set_gold(gold)
     wave_time_left = 0.05
     await get_tree().create_timer(0.5).timeout
-    if shop_open and not shop_offers.is_empty():
-        shop_offers[0] = {
-            "kind": "item",
-            "id": "boots",
-            "quality": 2,
-            "price": 16,
-            "bought": false,
-        }
+    if shop_open:
+        shop_offers = [
+            {"kind": "item", "id": "boots", "quality": 2, "price": 16, "bought": false},
+            {"kind": "item", "id": "magnet", "quality": 2, "price": 18, "bought": false},
+            {"kind": "weapon", "id": "peony", "quality": 4, "price": 96, "bought": false},
+            {"kind": "weapon", "id": "hammer", "quality": 1, "price": 10, "bought": false},
+        ]
         hud.refresh_shop(_shop_data())
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_shop.png")
@@ -862,6 +949,16 @@ func _capture_screenshot() -> void:
     await get_tree().create_timer(0.8).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_treasure.png")
+
+    _start_wave(6)
+    await get_tree().create_timer(0.5).timeout
+    var elite = get_tree().get_first_node_in_group("elite")
+    if elite != null:
+        elite.global_position = Vector2(640.0, 300.0)
+    await get_tree().create_timer(0.25).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_elite.png")
+    _clear_arena()
 
     _start_wave(8)
     await get_tree().create_timer(1.0).timeout
@@ -885,11 +982,11 @@ func _capture_screenshot() -> void:
     stage_clear = true
     get_tree().paused = true
     hud.show_stage_clear("1-1 · 熔炉入口", true, "波次 16 / 16\n金币 100\n构筑 4 武器 · 2 道具", "下一关 · 1-2 风蚀回廊")
-    await get_tree().create_timer(0.2).timeout
+    await get_tree().create_timer(0.5).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_clear.png")
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_shop.png m5_treasure.png m5_boss.png m5_clear.png")
+    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_shop.png m5_treasure.png m5_elite.png m5_boss.png m5_clear.png")
     get_tree().quit(0)
 
 func _save_screenshot(path: String) -> Error:
@@ -907,6 +1004,10 @@ func _run_smoke_test() -> void:
         return
     if hud.get_stage_button("1-1") == null:
         _fail_test("stage 1-1 button missing")
+        return
+    var balance_error := _check_balance_rules()
+    if balance_error != "":
+        _fail_test(balance_error)
         return
 
     _begin_run("1-1", false)
@@ -1036,7 +1137,7 @@ func _run_smoke_test() -> void:
     for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
         projectile.queue_free()
     await get_tree().process_frame
-    player.health = player.max_health
+    player.health = 30
     player.health_changed.emit(player.health, player.max_health)
 
     _clear_enemies()
@@ -1044,6 +1145,9 @@ func _run_smoke_test() -> void:
     await get_tree().create_timer(0.5).timeout
     if not shop_open or not hud.is_shop_visible():
         _fail_test("shop did not open after wave")
+        return
+    if player.health <= 30:
+        _fail_test("wave heal missing")
         return
     var has_starter := false
     for offer in shop_offers:
@@ -1168,6 +1272,21 @@ func _run_smoke_test() -> void:
         return
     _clear_arena()
 
+    _start_wave(6)
+    await get_tree().create_timer(0.4).timeout
+    var elites := get_tree().get_nodes_in_group("elite")
+    if elites.is_empty():
+        _fail_test("wave 6 elite missing")
+        return
+    var gold_before_elite := gold
+    var elite = elites[0]
+    elite.take_damage(999999)
+    await get_tree().create_timer(0.2).timeout
+    if coins.get_child_count() < 4 and gold <= gold_before_elite:
+        _fail_test("elite coin drop missing")
+        return
+    _clear_arena()
+
     _start_wave(8)
     await get_tree().create_timer(0.9).timeout
     var boss = get_tree().get_first_node_in_group("boss")
@@ -1266,6 +1385,46 @@ func _run_smoke_test() -> void:
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
     print("SMOKE_TEST_PASS input=%s stage_select=true shop=true merge=true coins=true enemies=true boss8=true stage_clear=true endless=true build=%s" % [input_mode, weapon_manager.get_build_signature()])
     get_tree().quit(0)
+
+func _check_balance_rules() -> String:
+    if not has_method("_quality_for_roll"):
+        return "quality helper missing"
+    if _quality_for_roll(0.0, 1.0) != 4:
+        return "quality q4 boundary wrong"
+    if _quality_for_roll(0.13, 1.0) != 3:
+        return "quality q3 boundary wrong"
+    if _quality_for_roll(0.45, 1.0) != 2:
+        return "quality q2 boundary wrong"
+    if _quality_for_roll(0.95, 1.0) != 1:
+        return "quality q1 boundary wrong"
+    if not has_method("_quality_chances"):
+        return "quality chances helper missing"
+    var chances: Array = _quality_chances(1.0)
+    if float(chances[0]) >= float(chances[1]):
+        return "legendary must be rarer than epic"
+    if not is_equal_approx(_quality_progress_for(0, false, 1), 0.0):
+        return "campaign quality progress start wrong"
+    if not is_equal_approx(_quality_progress_for(11, false, 1), 1.0):
+        return "campaign quality progress end wrong"
+    if not is_equal_approx(_quality_progress_for(0, true, 50), 1.0):
+        return "endless quality progress cap wrong"
+    if _offer_price("weapon", 1) != 10 or _offer_price("weapon", 4) != 96:
+        return "weapon prices wrong"
+    if _offer_price("item", 1) != 8 or _offer_price("item", 4) != 76:
+        return "item prices wrong"
+    if _coin_value_for(16) != 3:
+        return "coin value wrong"
+    if _enemy_cap_for(16) != 32:
+        return "enemy cap wrong"
+    if _spawn_interval_for(16, 3) > 0.34:
+        return "late spawn interval wrong"
+    if not _is_elite_wave(6) or _is_elite_wave(7) or not _is_elite_wave(14):
+        return "elite schedule wrong"
+    if not is_equal_approx(_wave_heal_ratio(false), 0.08):
+        return "normal wave heal wrong"
+    if not is_equal_approx(_wave_heal_ratio(true), 0.20):
+        return "boss wave heal wrong"
+    return ""
 
 func _fail_test(reason: String) -> void:
     push_error("SMOKE_TEST_FAIL: " + reason)

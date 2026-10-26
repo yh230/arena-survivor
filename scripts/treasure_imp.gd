@@ -11,6 +11,7 @@ var player = null
 var wander_direction := Vector2.RIGHT
 var wander_timer := 0.0
 var damage_flash := 0.0
+var pulse := 0.0
 var active := true
 
 func _ready() -> void:
@@ -31,6 +32,7 @@ func _physics_process(delta: float) -> void:
         _escape()
         return
 
+    pulse += delta
     wander_timer -= delta
     if wander_timer <= 0.0:
         wander_timer = randf_range(0.5, 1.2)
@@ -83,7 +85,8 @@ func _draw() -> void:
     draw_circle(Vector2.ZERO, 9.0, Color("#fef3c7"))
     draw_circle(Vector2(-5.0, -3.0), 2.5, Color("#78350f"))
     draw_circle(Vector2(5.0, -3.0), 2.5, Color("#78350f"))
-    draw_arc(Vector2.ZERO, 24.0, 0.0, TAU, 32, Color(1.0, 0.9, 0.3, 0.55), 2.0, true)
+    var aura := 0.5 + 0.5 * sin(pulse * 4.0)
+    draw_arc(Vector2.ZERO, 24.0 + aura * 3.0, 0.0, TAU, 32, Color(1.0, 0.9, 0.3, 0.35 + aura * 0.3), 2.0, true)
 
     var ratio: float = clampf(float(health) / float(max_health), 0.0, 1.0)
     draw_rect(Rect2(-18.0, -32.0, 36.0, 4.0), Color(0.0, 0.0, 0.0, 0.6))

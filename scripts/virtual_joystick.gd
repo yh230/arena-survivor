@@ -83,8 +83,8 @@ func _draw() -> void:
     if _center == Vector2.ZERO:
         _center = size * 0.5
 
-    draw_circle(_center, base_radius, Color(0.035, 0.085, 0.095, 0.74))
-    draw_arc(_center, base_radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.55), 1.5, true)
+    draw_circle(_center, base_radius, Color(0.035, 0.085, 0.095, 0.74 if not _active else 0.86))
+    draw_arc(_center, base_radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.45 if not _active else 0.8), 1.5, true)
     draw_arc(_center, base_radius - 7.0, 0.0, TAU, 64, Color(0.16, 0.32, 0.32, 0.42), 1.0, true)
     for index in range(12):
         var angle := TAU * float(index) / 12.0
@@ -93,8 +93,9 @@ func _draw() -> void:
         draw_line(inner, outer, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.35), 1.0, true)
 
     var knob_position := _center + _vector * base_radius
-    draw_circle(knob_position, knob_radius + 3.0, Color(0.0, 0.0, 0.0, 0.28))
-    draw_circle(knob_position, knob_radius, Color(0.10, 0.42, 0.40, 0.92))
-    draw_circle(knob_position, knob_radius * 0.72, Color(0.16, 0.78, 0.71, 0.95))
-    draw_circle(knob_position, knob_radius * 0.34, Color(0.86, 1.0, 1.0, 0.92))
-    draw_arc(knob_position, knob_radius, 0.0, TAU, 48, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.65), 1.2, true)
+    var knob_size := knob_radius * (1.06 if _active else 1.0)
+    draw_circle(knob_position, knob_size + 3.0, Color(0.0, 0.0, 0.0, 0.28))
+    draw_circle(knob_position, knob_size, Color(0.10, 0.42, 0.40, 0.92))
+    draw_circle(knob_position, knob_size * 0.72, Color(0.16, 0.78, 0.71, 0.95))
+    draw_circle(knob_position, knob_size * 0.34, Color(0.86, 1.0, 1.0, 0.92))
+    draw_arc(knob_position, knob_size, 0.0, TAU, 48, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.65), 1.2, true)
