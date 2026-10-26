@@ -1,0 +1,124 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/hud.gd" id="1_hud"]
+[ext_resource type="Script" path="res://scripts/virtual_joystick.gd" id="2_joystick"]
+
+[node name="HUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="Root" type="Control" parent="."]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Stats" type="VBoxContainer" parent="Root"]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 24.0
+offset_top = 18.0
+offset_right = 520.0
+offset_bottom = 150.0
+mouse_filter = 2
+theme_override_constants/separation = 6
+
+[node name="HealthLabel" type="Label" parent="Root/Stats"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.80, 1.00, 0.95, 1)
+theme_override_font_sizes/font_size = 28
+text = "HP 100 / 100"
+
+[node name="EnemyLabel" type="Label" parent="Root/Stats"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.98, 0.75, 0.75, 1)
+theme_override_font_sizes/font_size = 22
+text = "ENEMIES 0"
+
+[node name="TimeLabel" type="Label" parent="Root/Stats"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.86, 0.92, 1)
+theme_override_font_sizes/font_size = 22
+text = "TIME 0s"
+
+[node name="TipLabel" type="Label" parent="Root"]
+layout_mode = 1
+anchors_preset = 0
+offset_left = 656.0
+offset_top = 20.0
+offset_right = 1256.0
+offset_bottom = 64.0
+mouse_filter = 2
+theme_override_colors/font_color = Color(0.55, 0.72, 0.78, 1)
+theme_override_font_sizes/font_size = 18
+text = "WASD / arrows or drag the joystick. Auto attack is on."
+horizontal_alignment = 2
+
+[node name="Joystick" type="Control" parent="Root" groups=["virtual_joystick"]]
+layout_mode = 1
+anchors_preset = 2
+anchor_top = 1.0
+anchor_bottom = 1.0
+offset_left = 28.0
+offset_top = -268.0
+offset_right = 288.0
+offset_bottom = -8.0
+mouse_filter = 0
+script = ExtResource("2_joystick")
+
+[node name="GameOver" type="Control" parent="Root"]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 0
+
+[node name="Backdrop" type="ColorRect" parent="Root/GameOver"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.02, 0.03, 0.04, 0.78)
+mouse_filter = 2
+
+[node name="Center" type="CenterContainer" parent="Root/GameOver"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="VBox" type="VBoxContainer" parent="Root/GameOver/Center"]
+layout_mode = 2
+theme_override_constants/separation = 18
+alignment = 1
+
+[node name="Title" type="Label" parent="Root/GameOver/Center/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(1.00, 0.45, 0.45, 1)
+theme_override_font_sizes/font_size = 64
+text = "GAME OVER"
+horizontal_alignment = 1
+
+[node name="Stats" type="Label" parent="Root/GameOver/Center/VBox"]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.90, 0.95, 1.00, 1)
+theme_override_font_sizes/font_size = 26
+text = "Survived 0s"
+horizontal_alignment = 1
+
+[node name="RestartButton" type="Button" parent="Root/GameOver/Center/VBox"]
+custom_minimum_size = Vector2(220, 56)
+layout_mode = 2
+size_flags_horizontal = 4
+theme_override_font_sizes/font_size = 24
+text = "RESTART"
