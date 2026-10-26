@@ -26,6 +26,7 @@ const UPGRADE_POOL := {
 @onready var enemies: Node2D = $Enemies
 @onready var projectiles: Node2D = $Projectiles
 @onready var hud = $HUD
+@onready var weapon_manager = $Player/WeaponManager
 
 var wave := 1
 var wave_active := false
@@ -38,6 +39,7 @@ var choosing_upgrade := false
 var best_wave := 0
 var test_mode := false
 var save_path := SAVE_PATH
+var pending_evolution_type := ""
 
 func _ready() -> void:
     test_mode = OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--screenshot")
@@ -49,10 +51,12 @@ func _ready() -> void:
     player.died.connect(_on_player_died)
     hud.restart_requested.connect(_restart)
     hud.upgrade_selected.connect(_on_upgrade_selected)
+    hud.evolution_selected.connect(_on_evolution_selected)
     hud.dash_requested.connect(player.try_dash)
     _load_best_wave()
     hud.set_health(player.health, player.max_health)
     hud.set_best_wave(best_wave)
+    hud.set_weapon_slots(weapon_manager.get_slots())
     _start_wave(1)
 
     if OS.get_cmdline_user_args().has("--smoke-test"):
@@ -95,6 +99,7 @@ func _start_wave(number: int) -> void:
     hud.set_remaining(enemies_remaining_to_spawn)
     hud.set_time(elapsed)
     hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
+    hud.set_weapon_slots(weapon_manager.get_slots())
     Audio.play("wave_start", -12.0)
 
 func _spawn_enemy() -> void:
@@ -140,17 +145,45 @@ func _complete_wave() -> void:
     wave_active = false
     if wave >= TOTAL_WAVES:
         victory = true
+        weapon_manager.visible = false
+        for projectile in projectiles.get_children():
+            projectile.queue_free()
         hud.show_victory(elapsed, TOTAL_WAVES, best_wave)
         Audio.play("victory", -4.0)
         get_tree().paused = true
         return
 
     choosing_upgrade = true
-    hud.show_upgrade_choices(_pick_upgrades(3))
+    hud.show_upgrade_choices(_build_choices())
     get_tree().paused = true
 
 func _on_upgrade_selected(id: String) -> void:
-    player.apply_upgrade(id)
+    if id.begins_with("stat:"):
+        player.apply_upgrade(id.substr(5))
+    elif id.begins_with("weapon:"):
+        weapon_manager.add_weapon(id.substr(7))
+    elif id.begins_with("upgrade:"):
+        var weapon_type := id.substr(8)
+        var result: Dictionary = weapon_manager.upgrade_weapon(weapon_type)
+        if not result.is_empty() and not result["choices"].is_empty():
+            pending_evolution_type = str(result["type"])
+            hud.set_weapon_slots(weapon_manager.get_slots())
+            hud.show_evolution_choices(str(result["title"]), result["choices"])
+            return
+    else:
+        push_warning("Unknown upgrade choice: " + id)
+
+    hud.set_weapon_slots(weapon_manager.get_slots())
+    hud.close_upgrade_choices()
+    choosing_upgrade = false
+    get_tree().paused = false
+    _start_wave(wave + 1)
+
+func _on_evolution_selected(id: String) -> void:
+    if pending_evolution_type != "":
+        weapon_manager.apply_evolution(pending_evolution_type, id)
+    pending_evolution_type = ""
+    hud.set_weapon_slots(weapon_manager.get_slots())
     hud.close_upgrade_choices()
     choosing_upgrade = false
     get_tree().paused = false
@@ -163,6 +196,9 @@ func _on_player_died() -> void:
     for enemy in enemies.get_children():
         if enemy.has_method("stop"):
             enemy.stop()
+    weapon_manager.visible = false
+    for projectile in projectiles.get_children():
+        projectile.queue_free()
     hud.show_game_over(elapsed, wave, TOTAL_WAVES, best_wave)
     Audio.play("game_over", -4.0)
     get_tree().paused = true
@@ -176,18 +212,54 @@ func _unhandled_input(event: InputEvent) -> void:
         if event.keycode == KEY_R or event.keycode == KEY_ENTER:
             _restart()
 
-func _pick_upgrades(count: int) -> Array:
-    var ids: Array = []
+func _build_choices() -> Array:
+    var weapon_cards: Array = weapon_manager.get_cards()
+    var stat_cards := _stat_cards()
+    var choices: Array = []
+    var used_ids := {}
+
+    if not weapon_cards.is_empty():
+        var new_cards: Array = []
+        for card in weapon_cards:
+            if card["kind"] == "weapon_new":
+                new_cards.append(card)
+        var guaranteed: Dictionary
+        if weapon_manager.get_equipped_count() < 2 and not new_cards.is_empty():
+            guaranteed = new_cards.pick_random()
+        else:
+            guaranteed = weapon_cards.pick_random()
+        choices.append(guaranteed)
+        used_ids[guaranteed["id"]] = true
+
+    var pool: Array = []
+    for card in weapon_cards:
+        if not used_ids.has(card["id"]):
+            pool.append(card)
+    for card in stat_cards:
+        pool.append(card)
+    pool.shuffle()
+
+    for card in pool:
+        if choices.size() >= 3:
+            break
+        if used_ids.has(card["id"]):
+            continue
+        choices.append(card)
+        used_ids[card["id"]] = true
+
+    return choices
+
+func _stat_cards() -> Array:
+    var cards: Array = []
     for key in UPGRADE_POOL.keys():
         var id := str(key)
         if player.can_apply_upgrade(id):
-            ids.append(id)
-    ids.shuffle()
-    var choices: Array = []
-    for index in range(mini(count, ids.size())):
-        var id := str(ids[index])
-        choices.append({"id": id, "title": UPGRADE_POOL[id]["title"]})
-    return choices
+            cards.append({
+                "id": "stat:" + id,
+                "title": UPGRADE_POOL[id]["title"],
+                "kind": "stat",
+            })
+    return cards
 
 func _load_best_wave() -> void:
     var config := ConfigFile.new()
@@ -319,6 +391,7 @@ func _run_smoke_test() -> void:
         return
 
     var upgrade_count := 0
+    var evolution_count := 0
     var click_retries := 0
     for expected_wave in range(1, TOTAL_WAVES):
         if expected_wave > 1:
@@ -337,22 +410,57 @@ func _run_smoke_test() -> void:
             _fail_smoke_test("upgrade panel missing")
             return
 
-        var before_upgrade := _upgrade_snapshot()
-        await _click_upgrade_choice(0, expected_wave % 2 == 0)
+        var choice_ids: Array = hud.get_choice_ids()
+        if choice_ids.is_empty():
+            _fail_smoke_test("wave %d has no choices" % expected_wave)
+            return
+        var available_weapon_cards: Array = weapon_manager.get_cards()
+        if not available_weapon_cards.is_empty():
+            var has_weapon_choice := false
+            for choice_id in choice_ids:
+                var id_text := str(choice_id)
+                if id_text.begins_with("weapon:") or id_text.begins_with("upgrade:"):
+                    has_weapon_choice = true
+                    break
+            if not has_weapon_choice:
+                _fail_smoke_test("wave %d has no guaranteed weapon card" % expected_wave)
+                return
+
+        var chosen_index := 0
+        for index in range(choice_ids.size()):
+            var id_text := str(choice_ids[index])
+            if id_text.begins_with("weapon:") or id_text.begins_with("upgrade:"):
+                chosen_index = index
+                break
+
+        var before_stats := _upgrade_snapshot()
+        var before_build: String = weapon_manager.get_build_signature()
+        await _click_upgrade_choice(chosen_index, expected_wave % 2 == 0)
         await get_tree().process_frame
-        if get_tree().paused:
-            click_retries += 1
-            await get_tree().create_timer(0.15).timeout
+
+        if get_tree().paused and hud.is_evolution_mode():
+            evolution_count += 1
             await _click_upgrade_choice(0, expected_wave % 2 == 0)
             await get_tree().process_frame
+            if get_tree().paused:
+                click_retries += 1
+                await get_tree().create_timer(0.15).timeout
+                await _click_upgrade_choice(0, expected_wave % 2 == 0)
+                await get_tree().process_frame
+        elif get_tree().paused:
+            click_retries += 1
+            await get_tree().create_timer(0.15).timeout
+            await _click_upgrade_choice(chosen_index, expected_wave % 2 == 0)
+            await get_tree().process_frame
+
         if get_tree().paused:
             _fail_smoke_test("wave %d still paused after upgrade" % expected_wave)
             return
         if wave != expected_wave + 1:
             _fail_smoke_test("wave %d did not start" % (expected_wave + 1))
             return
-        if _upgrade_snapshot() == before_upgrade:
-            _fail_smoke_test("upgrade had no effect")
+        if _upgrade_snapshot() == before_stats and weapon_manager.get_build_signature() == before_build:
+            _fail_smoke_test("wave %d upgrade had no effect" % expected_wave)
             return
         upgrade_count += 1
 
@@ -416,7 +524,8 @@ func _run_smoke_test() -> void:
         return
 
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    print("SMOKE_TEST_PASS input=%s dash=true waves=10 upgrades=%d retries=%d boss=true victory=true death=true audio=true save_load=true" % [input_mode, upgrade_count, click_retries])
+    var final_build: String = weapon_manager.get_build_signature()
+    print("SMOKE_TEST_PASS input=%s dash=true waves=10 upgrades=%d evolutions=%d retries=%d build=%s boss=true victory=true death=true audio=true save_load=true" % [input_mode, upgrade_count, evolution_count, click_retries, final_build])
     get_tree().quit(0)
 
 func _fail_smoke_test(reason: String) -> void:
@@ -538,23 +647,48 @@ func _simulate_drag(center: Vector2, offset: Vector2, is_touch: bool) -> void:
 func _capture_screenshot() -> void:
     await get_tree().create_timer(2.5).timeout
     await RenderingServer.frame_post_draw
-    var first_error := _save_screenshot("res://screenshots/m3_screenshot.png")
+    var first_error := _save_screenshot("res://screenshots/m4_screenshot.png")
 
     _force_clear_wave()
     await get_tree().process_frame
     await get_tree().process_frame
     await get_tree().create_timer(0.3).timeout
     await RenderingServer.frame_post_draw
-    var second_error := _save_screenshot("res://screenshots/m3_upgrade_screenshot.png")
+    var second_error := _save_screenshot("res://screenshots/m4_upgrade_screenshot.png")
 
     choosing_upgrade = false
     victory = false
     get_tree().paused = false
     hud.close_upgrade_choices()
-    _start_wave(TOTAL_WAVES)
-    await get_tree().create_timer(4.2).timeout
+
+    weapon_manager.add_weapon("turret")
+    weapon_manager.upgrade_weapon("turret")
+    var turret_evolution: Dictionary = weapon_manager.upgrade_weapon("turret")
+    hud.set_weapon_slots(weapon_manager.get_slots())
+    hud.show_evolution_choices("TURRET", turret_evolution["choices"])
+    get_tree().paused = true
+    await get_tree().create_timer(0.2).timeout
     await RenderingServer.frame_post_draw
-    var third_error := _save_screenshot("res://screenshots/m3_boss_screenshot.png")
+    var third_error := _save_screenshot("res://screenshots/m4_evolution_screenshot.png")
+    weapon_manager.apply_evolution("turret", "turret:laser")
+
+    _add_evolved_weapon("orbiter", "orbiter:fire")
+    _add_evolved_weapon("chain", "chain:storm")
+    _add_evolved_weapon("pierce", "pierce:railgun")
+    hud.set_weapon_slots(weapon_manager.get_slots())
+    hud.close_upgrade_choices()
+    get_tree().paused = false
+    wave_active = false
+    _start_wave(TOTAL_WAVES)
+    await get_tree().create_timer(0.8).timeout
+    var boss = get_tree().get_first_node_in_group("boss")
+    if boss != null:
+        boss.max_health = 99999
+        boss.health = 99999
+        hud.set_boss_health(99999, 99999)
+    await get_tree().create_timer(3.4).timeout
+    await RenderingServer.frame_post_draw
+    var fourth_error := _save_screenshot("res://screenshots/m4_build_screenshot.png")
 
     choosing_upgrade = false
     victory = false
@@ -564,6 +698,9 @@ func _capture_screenshot() -> void:
     await get_tree().process_frame
     await get_tree().process_frame
     victory = true
+    weapon_manager.visible = false
+    for projectile in projectiles.get_children():
+        projectile.queue_free()
     get_tree().paused = true
     hud.set_wave(TOTAL_WAVES, TOTAL_WAVES)
     hud.set_enemy_count(0)
@@ -573,14 +710,21 @@ func _capture_screenshot() -> void:
     hud.show_victory(120.0, TOTAL_WAVES, TOTAL_WAVES)
     await get_tree().create_timer(0.2).timeout
     await RenderingServer.frame_post_draw
-    var fourth_error := _save_screenshot("res://screenshots/m3_end_screenshot.png")
+    var fifth_error := _save_screenshot("res://screenshots/m4_end_screenshot.png")
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
-    if first_error == OK and second_error == OK and third_error == OK and fourth_error == OK:
-        print("SCREENSHOT_SAVED m3_screenshot.png m3_upgrade_screenshot.png m3_boss_screenshot.png m3_end_screenshot.png")
+    if first_error == OK and second_error == OK and third_error == OK and fourth_error == OK and fifth_error == OK:
+        print("SCREENSHOT_SAVED m4_screenshot.png m4_upgrade_screenshot.png m4_evolution_screenshot.png m4_build_screenshot.png m4_end_screenshot.png")
         get_tree().quit(0)
     else:
         get_tree().quit(1)
+
+func _add_evolved_weapon(weapon_type: String, evolution_id: String) -> void:
+    weapon_manager.add_weapon(weapon_type)
+    weapon_manager.upgrade_weapon(weapon_type)
+    var result: Dictionary = weapon_manager.upgrade_weapon(weapon_type)
+    if not result.is_empty():
+        weapon_manager.apply_evolution(weapon_type, evolution_id)
 
 func _save_screenshot(path: String) -> Error:
     var image := get_viewport().get_texture().get_image()
