@@ -22,6 +22,7 @@ const CHAPTER_MULT := [1.0, 1.18, 1.38]
 const WAVES_PER_STAGE := 16
 const BOSS_WAVES := [8, 16]
 const START_GOLD := 15
+const CHAPTER_START_GOLD := 5
 const REROLL_COST := 2
 const SHOP_OFFER_COUNT := 4
 const STARTER_WEAPON := "maple"
@@ -72,12 +73,13 @@ var next_stage_id := ""
 var max_unlocked := 0
 var endless_unlocked := false
 var best_endless_wave := 0
+var total_kills := 0
 
 var shake_time := 0.0
 var shake_strength := 0.0
 
 func _ready() -> void:
-    test_mode = OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--screenshot")
+    test_mode = OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--screenshot") or OS.get_cmdline_user_args().has("--playtest")
     if test_mode:
         save_path = TEST_SAVE_PATH
         DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
@@ -111,6 +113,12 @@ func _ready() -> void:
         call_deferred("_run_smoke_test")
     elif OS.get_cmdline_user_args().has("--screenshot"):
         call_deferred("_capture_screenshot")
+    elif OS.get_cmdline_user_args().has("--playtest"):
+        call_deferred("_start_playtest")
+
+func _start_playtest() -> void:
+    var bot: Node = load("res://scripts/playtest_bot.gd").new()
+    add_child(bot)
 
 func _process(delta: float) -> void:
     _update_shake(delta)
@@ -178,10 +186,11 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     stage_clear = false
     shop_open = false
     wave = 1
-    gold = START_GOLD
+    gold = START_GOLD + (chapter - 1) * CHAPTER_START_GOLD
     shop_offers.clear()
     shop_message = ""
     last_heal_amount = 0
+    total_kills = 0
 
     _clear_arena()
     player.visible = true
@@ -194,7 +203,7 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     player.health_changed.emit(player.health, player.max_health)
     weapon_manager.visible = true
     weapon_manager.reset_build()
-    weapon_manager.buy_weapon(STARTER_WEAPON, 1)
+    weapon_manager.buy_weapon(STARTER_WEAPON, mini(4, chapter))
     _apply_item_stats()
     hud.hide_stage_select()
     hud.hide_shop()
@@ -285,7 +294,7 @@ func _is_elite_wave(wave_no: int) -> bool:
     return wave_no == 6 or wave_no == 14
 
 func _wave_heal_ratio(is_boss: bool) -> float:
-    return 0.20 if is_boss else 0.08
+    return 0.25 if is_boss else 0.10
 
 func _start_wave(number: int) -> void:
     wave = number
@@ -438,6 +447,7 @@ func _on_boss_defeated() -> void:
     hud.hide_boss_bar()
 
 func _on_enemy_died(drop_position: Vector2, coin_count: int) -> void:
+    total_kills += 1
     var base_value := _coin_value_for(wave)
     for index in range(coin_count):
         var coin = COIN_SCRIPT.new()
@@ -483,6 +493,7 @@ func _open_shop() -> void:
     _generate_offers()
     if wave == 1:
         _ensure_starter_offer()
+    _ensure_weapon_offer()
     hud.show_shop(_shop_data())
     last_heal_amount = 0
 
@@ -491,9 +502,16 @@ func _ensure_starter_offer() -> void:
         if offer["kind"] == "weapon" and int(offer["quality"]) == 1:
             return
     var weapon_types: Array = weapon_manager.get_weapon_types()
+    var candidates: Array = []
+    for weapon_type in weapon_types:
+        if weapon_manager.can_buy_weapon(str(weapon_type), 1):
+            candidates.append(str(weapon_type))
+    var chosen := str(weapon_types[randi() % weapon_types.size()])
+    if not candidates.is_empty():
+        chosen = str(candidates[randi() % candidates.size()])
     var starter := {
         "kind": "weapon",
-        "id": str(weapon_types[randi() % weapon_types.size()]),
+        "id": chosen,
         "quality": 1,
         "price": _offer_price("weapon", 1),
         "bought": false,
@@ -502,6 +520,33 @@ func _ensure_starter_offer() -> void:
         shop_offers.append(starter)
     else:
         shop_offers[shop_offers.size() - 1] = starter
+
+func _ensure_weapon_offer() -> void:
+    var weapon_count := 0
+    for slot in weapon_manager.get_weapon_slots():
+        if not slot.is_empty():
+            weapon_count += 1
+    if weapon_count >= 4:
+        return
+    for offer in shop_offers:
+        if offer["kind"] == "weapon" and weapon_manager.can_buy_weapon(str(offer["id"]), int(offer["quality"])):
+            return
+    if shop_offers.is_empty():
+        return
+    var weapon_types: Array = weapon_manager.get_weapon_types()
+    var candidates: Array = []
+    for weapon_type in weapon_types:
+        if weapon_manager.can_buy_weapon(str(weapon_type), 1):
+            candidates.append(str(weapon_type))
+    if candidates.is_empty():
+        return
+    shop_offers[shop_offers.size() - 1] = {
+        "kind": "weapon",
+        "id": str(candidates[randi() % candidates.size()]),
+        "quality": 1,
+        "price": _offer_price("weapon", 1),
+        "bought": false,
+    }
 
 func _generate_offers() -> void:
     shop_offers.clear()
@@ -1420,9 +1465,9 @@ func _check_balance_rules() -> String:
         return "late spawn interval wrong"
     if not _is_elite_wave(6) or _is_elite_wave(7) or not _is_elite_wave(14):
         return "elite schedule wrong"
-    if not is_equal_approx(_wave_heal_ratio(false), 0.08):
+    if not is_equal_approx(_wave_heal_ratio(false), 0.10):
         return "normal wave heal wrong"
-    if not is_equal_approx(_wave_heal_ratio(true), 0.20):
+    if not is_equal_approx(_wave_heal_ratio(true), 0.25):
         return "boss wave heal wrong"
     return ""
 
