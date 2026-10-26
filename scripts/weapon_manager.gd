@@ -454,6 +454,17 @@ func _pierce_range(quality: int) -> float:
 func _pierce_width(quality: int) -> float:
     return 16.0 if quality >= MAX_QUALITY else 18.0
 
+func reset_build() -> void:
+    weapon_qualities.clear()
+    weapon_order.clear()
+    item_qualities.clear()
+    item_order.clear()
+    turrets.clear()
+    fire_patches.clear()
+    poison_fields.clear()
+    beams.clear()
+    chain_points.clear()
+
 func get_weapon_types() -> Array:
     return WEAPON_ORDER.duplicate()
 

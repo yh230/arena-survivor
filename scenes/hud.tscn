@@ -78,7 +78,7 @@ offset_bottom = 64.0
 mouse_filter = 2
 theme_override_colors/font_color = Color(0.55, 0.72, 0.78, 1)
 theme_override_font_sizes/font_size = 18
-text = "WASD / arrows or drag the joystick. Auto attack is on."
+text = "Move with the joystick or WASD. Auto attack is always on."
 horizontal_alignment = 2
 
 [node name="Joystick" type="Control" parent="Root" groups=["virtual_joystick"]]

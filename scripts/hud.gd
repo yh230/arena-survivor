@@ -65,6 +65,9 @@ func _ready() -> void:
     boss_bar.visible = false
     restart_button.pressed.connect(_on_retry_pressed)
     dash_button.pressed.connect(_on_dash_pressed)
+    for label in [health_label, stage_label, wave_label, gold_label, timer_label, enemy_label, best_label, tip_label]:
+        label.add_theme_color_override("font_outline_color", Color(0.01, 0.02, 0.03, 0.9))
+        label.add_theme_constant_override("outline_size", 4)
     _build_end_actions()
     _build_stage_select()
     _build_shop()

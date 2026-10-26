@@ -18,6 +18,7 @@ const BOSS_WAVES := [8, 16]
 const START_GOLD := 15
 const REROLL_COST := 2
 const SHOP_OFFER_COUNT := 4
+const STARTER_WEAPON := "maple"
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
 
@@ -125,7 +126,7 @@ func _process(delta: float) -> void:
             _spawn_treasure()
         wave_time_left -= delta
         spawn_timer -= delta
-        if spawn_timer <= 0.0 and enemies.get_child_count() < 40:
+        if spawn_timer <= 0.0 and enemies.get_child_count() < _enemy_cap():
             _spawn_enemy()
             spawn_timer = _spawn_interval()
         if wave_time_left <= 0.0:
@@ -177,6 +178,8 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     player.move_speed = 320.0
     player.health_changed.emit(player.health, player.max_health)
     weapon_manager.visible = true
+    weapon_manager.reset_build()
+    weapon_manager.buy_weapon(STARTER_WEAPON, 1)
     _apply_item_stats()
     hud.hide_stage_select()
     hud.hide_shop()
@@ -231,9 +234,18 @@ func _start_wave(number: int) -> void:
 
 func _spawn_interval() -> float:
     var interval := maxf(0.35, 1.05 - float(wave) * 0.03 - float(chapter - 1) * 0.08)
+    if wave <= 2:
+        interval *= 1.35
     if wave >= 12:
         interval *= 0.75
     return interval
+
+func _enemy_cap() -> int:
+    if wave <= 2:
+        return 12
+    if wave <= 5:
+        return 22
+    return 40
 
 func _pick_enemy_type() -> String:
     if wave <= 2:
@@ -836,6 +848,9 @@ func _run_smoke_test() -> void:
         return
     if wave != 1 or shop_open or get_tree().paused:
         _fail_test("run did not start at wave 1")
+        return
+    if weapon_manager.get_weapon_quality(STARTER_WEAPON) < 1:
+        _fail_test("starter weapon missing")
         return
 
     var joystick = get_tree().get_first_node_in_group("virtual_joystick")
