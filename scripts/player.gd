@@ -4,6 +4,9 @@ signal health_changed(current: int, maximum: int)
 signal died
 
 @export var move_speed := 320.0
+@export var dash_speed := 900.0
+@export var dash_duration := 0.14
+@export var dash_cooldown := 2.5
 @export var max_health := 100
 @export var attack_interval := 0.45
 @export var attack_range := 520.0
@@ -18,6 +21,9 @@ var joystick = null
 var facing := Vector2.UP
 var projectile_count := 1
 var lifesteal := 0
+var dash_time := 0.0
+var dash_cooldown_left := 0.0
+var dash_direction := Vector2.UP
 
 func _ready() -> void:
     health = max_health
@@ -28,13 +34,25 @@ func _physics_process(delta: float) -> void:
     if is_dead:
         return
 
-    var direction: Vector2 = _get_move_direction()
-    velocity = direction * move_speed
-    move_and_slide()
-    _clamp_to_arena()
+    dash_cooldown_left = maxf(0.0, dash_cooldown_left - delta)
+    if Input.is_key_pressed(KEY_SPACE):
+        try_dash()
 
-    if direction.length_squared() > 0.01:
-        facing = direction.normalized()
+    if dash_time > 0.0:
+        velocity = dash_direction * dash_speed
+        move_and_slide()
+        _clamp_to_arena()
+        dash_time = maxf(0.0, dash_time - delta)
+        facing = dash_direction
+        if dash_time == 0.0:
+            velocity = Vector2.ZERO
+    else:
+        var direction: Vector2 = _get_move_direction()
+        velocity = direction * move_speed
+        move_and_slide()
+        _clamp_to_arena()
+        if direction.length_squared() > 0.01:
+            facing = direction.normalized()
 
     attack_cooldown = maxf(0.0, attack_cooldown - delta)
     hit_flash = maxf(0.0, hit_flash - delta)
@@ -92,6 +110,7 @@ func _try_auto_attack() -> void:
         projectile.direction = shot_direction
         projectile.damage = projectile_damage
         projectile.source = self
+    Audio.play("shoot", -18.0)
     attack_cooldown = attack_interval
 
 func _find_nearest_enemy():
@@ -107,10 +126,11 @@ func _find_nearest_enemy():
     return nearest
 
 func take_damage(amount: int) -> void:
-    if is_dead:
+    if is_dead or dash_time > 0.0:
         return
     health = maxi(0, health - amount)
     hit_flash = 0.15
+    Audio.play("hurt", -8.0)
     health_changed.emit(health, max_health)
     if health <= 0:
         _die()
@@ -120,6 +140,36 @@ func _die() -> void:
     velocity = Vector2.ZERO
     queue_redraw()
     died.emit()
+
+func try_dash() -> void:
+    if is_dead or dash_cooldown_left > 0.0 or dash_time > 0.0:
+        return
+    var direction: Vector2 = _get_move_direction()
+    if direction.length_squared() < 0.01:
+        direction = facing
+    if direction.length_squared() < 0.01:
+        direction = Vector2.UP
+    dash_direction = direction.normalized()
+    facing = dash_direction
+    dash_time = dash_duration
+    dash_cooldown_left = dash_cooldown
+    Audio.play("dash", -8.0)
+    queue_redraw()
+
+func can_dash() -> bool:
+    return not is_dead and dash_time <= 0.0 and dash_cooldown_left <= 0.0
+
+func get_dash_cooldown_remaining() -> float:
+    return dash_cooldown_left
+
+func can_apply_upgrade(id: String) -> bool:
+    match id:
+        "attack_speed":
+            return attack_interval > 0.181
+        "projectiles":
+            return projectile_count < 4
+        _:
+            return true
 
 func apply_upgrade(id: String) -> void:
     match id:
@@ -151,6 +201,8 @@ func _draw() -> void:
         draw_circle(Vector2.ZERO, 20.0, Color(0.32, 0.36, 0.40, 0.9))
         return
 
+    if dash_time > 0.0:
+        draw_circle(Vector2.ZERO, 29.0, Color(0.25, 1.0, 0.90, 0.25))
     if hit_flash > 0.0:
         draw_circle(Vector2.ZERO, 25.0, Color(1.0, 1.0, 1.0, 0.30))
     draw_circle(Vector2.ZERO, 20.0, Color("#0d9488"))

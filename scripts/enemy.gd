@@ -42,8 +42,10 @@ func _physics_process(delta: float) -> void:
 func take_damage(amount: int) -> void:
     health -= amount
     damage_flash = 0.12
+    Audio.play("hit", -16.0)
     queue_redraw()
     if health <= 0:
+        Audio.play("enemy_die", -10.0)
         queue_free()
 
 func stop() -> void:

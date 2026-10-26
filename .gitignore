@@ -1,4 +1,6 @@
 .godot/
+.build_appdata/
+.idea/
 build/
 *.apk
 *.aab

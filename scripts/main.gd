@@ -1,13 +1,15 @@
 extends Node2D
 
 const ENEMY_SCENE := preload("res://scenes/enemy.tscn")
-const TOTAL_WAVES := 3
-const WAVE_COUNTS := [8, 12, 16]
-const WAVE_INTERVALS := [1.15, 0.95, 0.75]
-const WAVE_HEALTH := [30, 45, 60]
-const WAVE_CONTACT_DAMAGE := [8, 10, 12]
-const WAVE_SPEED_MIN := [85.0, 95.0, 105.0]
-const WAVE_SPEED_MAX := [120.0, 135.0, 150.0]
+const BOSS_SCENE := preload("res://scenes/boss.tscn")
+const TOTAL_WAVES := 10
+const WAVE_COUNTS := [8, 10, 12, 14, 16, 18, 20, 22, 24, 1]
+const WAVE_INTERVALS := [1.15, 1.05, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.65, 0.0]
+const WAVE_HEALTH := [30, 38, 46, 54, 62, 70, 78, 86, 94, 0]
+const WAVE_CONTACT_DAMAGE := [8, 9, 10, 11, 12, 13, 14, 15, 16, 0]
+const WAVE_SPEED_MIN := [85.0, 90.0, 95.0, 100.0, 105.0, 110.0, 115.0, 120.0, 125.0, 0.0]
+const WAVE_SPEED_MAX := [120.0, 125.0, 130.0, 135.0, 140.0, 145.0, 150.0, 155.0, 160.0, 0.0]
+const BOSS_HEALTH := 900
 const MAX_ENEMIES := 20
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
@@ -47,6 +49,7 @@ func _ready() -> void:
     player.died.connect(_on_player_died)
     hud.restart_requested.connect(_restart)
     hud.upgrade_selected.connect(_on_upgrade_selected)
+    hud.dash_requested.connect(player.try_dash)
     _load_best_wave()
     hud.set_health(player.health, player.max_health)
     hud.set_best_wave(best_wave)
@@ -73,6 +76,7 @@ func _process(delta: float) -> void:
     hud.set_enemy_count(alive)
     hud.set_remaining(enemies_remaining_to_spawn)
     hud.set_time(elapsed)
+    hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
 
     if enemies_remaining_to_spawn == 0 and alive == 0:
         _complete_wave()
@@ -90,8 +94,14 @@ func _start_wave(number: int) -> void:
     hud.set_enemy_count(0)
     hud.set_remaining(enemies_remaining_to_spawn)
     hud.set_time(elapsed)
+    hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
+    Audio.play("wave_start", -12.0)
 
 func _spawn_enemy() -> void:
+    if wave == TOTAL_WAVES:
+        _spawn_boss()
+        return
+
     var view_size := get_viewport_rect().size
     var spawn_position := Vector2.ZERO
     match randi() % 4:
@@ -111,11 +121,27 @@ func _spawn_enemy() -> void:
     enemies.add_child(enemy)
     enemy.global_position = spawn_position
 
+func _spawn_boss() -> void:
+    var boss = BOSS_SCENE.instantiate()
+    boss.max_health = BOSS_HEALTH
+    boss.move_speed = 55.0
+    boss.contact_damage = 22
+    enemies.add_child(boss)
+    boss.global_position = Vector2(get_viewport_rect().size.x * 0.5, -90.0)
+    boss.health_changed.connect(hud.set_boss_health)
+    boss.defeated.connect(_on_boss_defeated)
+    hud.show_boss_bar(boss.health, boss.max_health)
+    Audio.play("boss_spawn", -4.0)
+
+func _on_boss_defeated() -> void:
+    hud.hide_boss_bar()
+
 func _complete_wave() -> void:
     wave_active = false
     if wave >= TOTAL_WAVES:
         victory = true
         hud.show_victory(elapsed, TOTAL_WAVES, best_wave)
+        Audio.play("victory", -4.0)
         get_tree().paused = true
         return
 
@@ -138,6 +164,7 @@ func _on_player_died() -> void:
         if enemy.has_method("stop"):
             enemy.stop()
     hud.show_game_over(elapsed, wave, TOTAL_WAVES, best_wave)
+    Audio.play("game_over", -4.0)
     get_tree().paused = true
 
 func _restart() -> void:
@@ -150,7 +177,11 @@ func _unhandled_input(event: InputEvent) -> void:
             _restart()
 
 func _pick_upgrades(count: int) -> Array:
-    var ids := UPGRADE_POOL.keys()
+    var ids: Array = []
+    for key in UPGRADE_POOL.keys():
+        var id := str(key)
+        if player.can_apply_upgrade(id):
+            ids.append(id)
     ids.shuffle()
     var choices: Array = []
     for index in range(mini(count, ids.size())):
@@ -203,8 +234,11 @@ func _run_smoke_test() -> void:
     if player == null:
         _fail_smoke_test("player missing")
         return
+    if not Audio.has_sound("shoot") or Audio.get_sound_names().size() < 11:
+        _fail_smoke_test("audio sounds missing")
+        return
 
-    # Keep the wave open while input tests run; the test enemy closes it later.
+    # Keep wave 1 open while input tests run; the test enemy closes it later.
     enemies_remaining_to_spawn = 1
     spawn_timer = 1.0e9
     for enemy in enemies.get_children():
@@ -262,54 +296,92 @@ func _run_smoke_test() -> void:
             _fail_smoke_test("keyboard did not move player")
             return
 
+    var dash_button: Button = hud.get_node("Root/DashButton")
+    var dash_start: Vector2 = player.global_position
+    await _click_button(dash_button)
+    await get_tree().create_timer(0.2).timeout
+    if player.get_dash_cooldown_remaining() <= 0.0:
+        _fail_smoke_test("dash cooldown did not start")
+        return
+    if player.global_position.distance_to(dash_start) <= 20.0:
+        _fail_smoke_test("dash did not move player")
+        return
+
+    player.global_position = Vector2(640.0, 360.0)
     enemies_remaining_to_spawn = 0
     var test_enemy := ENEMY_SCENE.instantiate()
     enemies.add_child(test_enemy)
-    test_enemy.global_position = player.global_position + Vector2(110.0, 0.0)
+    test_enemy.global_position = Vector2(750.0, 360.0)
     await get_tree().create_timer(2.2).timeout
 
     if is_instance_valid(test_enemy) and not test_enemy.is_queued_for_deletion():
         _fail_smoke_test("auto attack did not kill test enemy")
         return
 
-    await get_tree().process_frame
-    if not choosing_upgrade:
-        _fail_smoke_test("wave 1 upgrade choice missing")
-        return
-    if not get_tree().paused:
-        _fail_smoke_test("tree not paused during upgrade")
-        return
-    if not hud.is_upgrade_panel_visible():
-        _fail_smoke_test("upgrade panel missing")
+    var upgrade_count := 0
+    var click_retries := 0
+    for expected_wave in range(1, TOTAL_WAVES):
+        if expected_wave > 1:
+            _force_clear_wave()
+            await get_tree().process_frame
+            await get_tree().process_frame
+
+        await get_tree().process_frame
+        if not choosing_upgrade:
+            _fail_smoke_test("wave %d upgrade choice missing" % expected_wave)
+            return
+        if not get_tree().paused:
+            _fail_smoke_test("tree not paused during upgrade")
+            return
+        if not hud.is_upgrade_panel_visible():
+            _fail_smoke_test("upgrade panel missing")
+            return
+
+        var before_upgrade := _upgrade_snapshot()
+        await _click_upgrade_choice(0, expected_wave % 2 == 0)
+        await get_tree().process_frame
+        if get_tree().paused:
+            click_retries += 1
+            await get_tree().create_timer(0.15).timeout
+            await _click_upgrade_choice(0, expected_wave % 2 == 0)
+            await get_tree().process_frame
+        if get_tree().paused:
+            _fail_smoke_test("wave %d still paused after upgrade" % expected_wave)
+            return
+        if wave != expected_wave + 1:
+            _fail_smoke_test("wave %d did not start" % (expected_wave + 1))
+            return
+        if _upgrade_snapshot() == before_upgrade:
+            _fail_smoke_test("upgrade had no effect")
+            return
+        upgrade_count += 1
+
+    if wave != TOTAL_WAVES:
+        _fail_smoke_test("boss wave not reached")
         return
 
-    var before_upgrade := _upgrade_snapshot()
-    await _click_upgrade_choice(0)
-    if get_tree().paused:
-        _fail_smoke_test("tree still paused after upgrade")
+    await get_tree().create_timer(0.8).timeout
+    var boss = get_tree().get_first_node_in_group("boss")
+    if boss == null:
+        _fail_smoke_test("boss missing")
         return
-    if wave != 2:
-        _fail_smoke_test("wave 2 did not start")
-        return
-    if _upgrade_snapshot() == before_upgrade:
-        _fail_smoke_test("upgrade had no effect")
+    if not hud.is_boss_bar_visible():
+        _fail_smoke_test("boss bar missing")
         return
 
-    _force_clear_wave()
+    var boss_health_before: int = boss.health
+    boss.take_damage(100)
     await get_tree().process_frame
-    await get_tree().process_frame
-    if not choosing_upgrade:
-        _fail_smoke_test("wave 2 upgrade choice missing")
+    if boss.health >= boss_health_before:
+        _fail_smoke_test("boss did not take damage")
         return
-    await _click_upgrade_choice(0, true)
+    boss.take_damage(999999)
     await get_tree().process_frame
-    if wave != 3:
-        _fail_smoke_test("wave 3 did not start")
-        return
+    await get_tree().process_frame
 
-    _force_clear_wave()
-    await get_tree().process_frame
-    await get_tree().process_frame
+    if hud.is_boss_bar_visible():
+        _fail_smoke_test("boss bar not hidden after death")
+        return
     if not victory:
         _fail_smoke_test("victory missing")
         return
@@ -344,10 +416,7 @@ func _run_smoke_test() -> void:
         return
 
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    if input_mode == "headless_vector":
-        print("SMOKE_TEST_PASS input=headless_vector waves=3 upgrades=2 victory=true death=true save_load=true")
-    else:
-        print("SMOKE_TEST_PASS input=mouse+touch+keyboard waves=3 upgrades=2 victory=true death=true save_load=true")
+    print("SMOKE_TEST_PASS input=%s dash=true waves=10 upgrades=%d retries=%d boss=true victory=true death=true audio=true save_load=true" % [input_mode, upgrade_count, click_retries])
     get_tree().quit(0)
 
 func _fail_smoke_test(reason: String) -> void:
@@ -371,6 +440,10 @@ func _force_clear_wave() -> void:
 
 func _click_upgrade_choice(index: int, use_touch := false) -> void:
     var button: Button = hud.get_node("Root/UpgradePanel/Center/VBox/Choices/Choice%d" % (index + 1))
+    await get_tree().create_timer(0.1).timeout
+    await _click_button(button, use_touch)
+
+func _click_button(button: Button, use_touch := false) -> void:
     if DisplayServer.get_name() == "headless":
         button.pressed.emit()
         await get_tree().process_frame
@@ -386,11 +459,13 @@ func _click_upgrade_choice(index: int, use_touch := false) -> void:
         touch_press.position = center
         Input.parse_input_event(touch_press)
         await get_tree().process_frame
+        await get_tree().process_frame
         var touch_release := InputEventScreenTouch.new()
         touch_release.index = 0
         touch_release.pressed = false
         touch_release.position = center
         Input.parse_input_event(touch_release)
+        await get_tree().process_frame
         await get_tree().process_frame
         return
 
@@ -398,17 +473,20 @@ func _click_upgrade_choice(index: int, use_touch := false) -> void:
     motion.position = center
     Input.parse_input_event(motion)
     await get_tree().process_frame
+    await get_tree().process_frame
     var press := InputEventMouseButton.new()
     press.button_index = MOUSE_BUTTON_LEFT
     press.pressed = true
     press.position = center
     Input.parse_input_event(press)
     await get_tree().process_frame
+    await get_tree().process_frame
     var release := InputEventMouseButton.new()
     release.button_index = MOUSE_BUTTON_LEFT
     release.pressed = false
     release.position = center
     Input.parse_input_event(release)
+    await get_tree().process_frame
     await get_tree().process_frame
 
 func _simulate_drag(center: Vector2, offset: Vector2, is_touch: bool) -> void:
@@ -460,30 +538,46 @@ func _simulate_drag(center: Vector2, offset: Vector2, is_touch: bool) -> void:
 func _capture_screenshot() -> void:
     await get_tree().create_timer(2.5).timeout
     await RenderingServer.frame_post_draw
-    var first_error := _save_screenshot("res://screenshots/m2_screenshot.png")
+    var first_error := _save_screenshot("res://screenshots/m3_screenshot.png")
 
     _force_clear_wave()
     await get_tree().process_frame
     await get_tree().process_frame
     await get_tree().create_timer(0.3).timeout
     await RenderingServer.frame_post_draw
-    var second_error := _save_screenshot("res://screenshots/m2_upgrade_screenshot.png")
+    var second_error := _save_screenshot("res://screenshots/m3_upgrade_screenshot.png")
 
     choosing_upgrade = false
+    victory = false
+    get_tree().paused = false
+    hud.close_upgrade_choices()
+    _start_wave(TOTAL_WAVES)
+    await get_tree().create_timer(4.2).timeout
+    await RenderingServer.frame_post_draw
+    var third_error := _save_screenshot("res://screenshots/m3_boss_screenshot.png")
+
+    choosing_upgrade = false
+    victory = false
+    wave_active = false
+    for enemy in enemies.get_children():
+        enemy.queue_free()
+    await get_tree().process_frame
+    await get_tree().process_frame
     victory = true
+    get_tree().paused = true
     hud.set_wave(TOTAL_WAVES, TOTAL_WAVES)
     hud.set_enemy_count(0)
     hud.set_remaining(0)
-    hud.set_time(42.0)
+    hud.set_time(120.0)
     hud.set_best_wave(TOTAL_WAVES)
-    hud.show_victory(42.0, TOTAL_WAVES, TOTAL_WAVES)
+    hud.show_victory(120.0, TOTAL_WAVES, TOTAL_WAVES)
     await get_tree().create_timer(0.2).timeout
     await RenderingServer.frame_post_draw
-    var third_error := _save_screenshot("res://screenshots/m2_end_screenshot.png")
+    var fourth_error := _save_screenshot("res://screenshots/m3_end_screenshot.png")
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
-    if first_error == OK and second_error == OK and third_error == OK:
-        print("SCREENSHOT_SAVED m2_screenshot.png m2_upgrade_screenshot.png m2_end_screenshot.png")
+    if first_error == OK and second_error == OK and third_error == OK and fourth_error == OK:
+        print("SCREENSHOT_SAVED m3_screenshot.png m3_upgrade_screenshot.png m3_boss_screenshot.png m3_end_screenshot.png")
         get_tree().quit(0)
     else:
         get_tree().quit(1)
