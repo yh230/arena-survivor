@@ -15,7 +15,7 @@ func _ready() -> void:
     add_to_group("boss")
     coin_drop = 10
     contact_range = 78.0
-    damage_number_height = -72.0
+    damage_number_height = -112.0
     damage_number_color = Color("#fecaca")
     health_bar_color = Color("#fca5a5")
     death_color = Color("#ef4444")
@@ -23,6 +23,38 @@ func _ready() -> void:
     die_sound = "boss_die"
     die_sound_db = -2.0
     minion_timer = 3.0
+
+func _art_texture_path() -> String:
+    return "res://assets/sprites/boss.png"
+
+func _art_size() -> float:
+    return 196.0
+
+func _art_glow_color() -> Color:
+    return Color(1.0, 0.3, 0.16)
+
+func _art_glow_radius() -> float:
+    return 132.0
+
+func _art_glow_power() -> float:
+    return 0.14
+
+func _art_glow_rate() -> float:
+    return 2.2
+
+func _art_flash_strength() -> float:
+    return 0.15
+
+func _art_bob_rate() -> float:
+    return 2.0
+
+func _art_bob_size() -> float:
+    return 2.0
+
+func _process(delta: float) -> void:
+    super._process(delta)
+    if art != null:
+        art.rotation += delta * 0.18
 
 func _physics_process(delta: float) -> void:
     _tick_status(delta)
@@ -64,6 +96,7 @@ func _die() -> void:
     defeated.emit()
     Audio.play("boss_die", -2.0)
     Fx.burst(global_position, Color("#ef4444"), 24)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.4, 0.2), 260.0, 0.5)
     Fx.shake(14.0, 0.35)
     queue_free()
 
@@ -74,41 +107,11 @@ func _spawn_minions() -> void:
         get_parent().add_child(minion)
         minion.global_position = global_position + Vector2.from_angle(angle) * 90.0
         minion.move_speed = 120.0
+        ArtFX.flash_at(get_tree().current_scene, minion.global_position, Color(1.0, 0.35, 0.15), 34.0, 0.22)
         minion_spawned.emit(minion)
 
 func _draw() -> void:
-    var body_color := Color("#ef4444")
-    if damage_flash > 0.0:
-        body_color = Color("#ffb4a8")
-
-    draw_set_transform(Vector2(0.0, 56.0), 0.0, Vector2(1.0, 0.36))
-    draw_circle(Vector2.ZERO, 66.0, Color(0.0, 0.0, 0.0, 0.30))
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-    var pulse := 0.5 + 0.5 * sin(anim_time * 2.4)
-    draw_circle(Vector2.ZERO, 76.0 + pulse * 4.0, Color(1.0, 0.22, 0.12, 0.08 + pulse * 0.05))
-    _draw_gear(Vector2.ZERO, 64.0, 16, Color(0.78, 0.26, 0.22, 0.75), anim_time * 0.35, 4.0)
-    _draw_gear(Vector2.ZERO, 50.0, 12, Color(0.62, 0.18, 0.16, 0.85), -anim_time * 0.55, 3.0)
-
-    for index in range(6):
-        var angle := anim_time * 0.25 + TAU * float(index) / 6.0
-        var arm_start := Vector2.from_angle(angle) * 30.0
-        var arm_end := Vector2.from_angle(angle) * 54.0
-        draw_line(arm_start, arm_end, Color("#8f2f28"), 7.0, true)
-        draw_circle(arm_end, 5.0, Color("#fca5a5"))
-
-    draw_circle(Vector2.ZERO, 36.0, Color("#5b1611"))
-    draw_circle(Vector2.ZERO, 30.0, body_color)
-    draw_circle(Vector2.ZERO, 20.0 + pulse * 2.0, Color("#b91c1c"))
-    draw_circle(Vector2.ZERO, 12.0, Color("#f87171"))
-    draw_circle(Vector2.ZERO, 5.0, Color("#fff1f2"))
-
-    draw_circle(Vector2(-16.0, -8.0), 7.0, Color("#fef08a"))
-    draw_circle(Vector2(16.0, -8.0), 7.0, Color("#fef08a"))
-    draw_circle(Vector2(-16.0, -8.0), 3.0, Color("#450a0a"))
-    draw_circle(Vector2(16.0, -8.0), 3.0, Color("#450a0a"))
-
     if minion_timer < 1.2 and active:
         var ratio := 1.0 - clampf(minion_timer / 1.2, 0.0, 1.0)
-        draw_arc(Vector2.ZERO, 78.0 + ratio * 10.0, 0.0, TAU, 48, Color(1.0, 0.45, 0.25, 0.35 + ratio * 0.35), 3.0, true)
+        draw_arc(Vector2.ZERO, 112.0 + ratio * 12.0, 0.0, TAU, 48, Color(1.0, 0.45, 0.25, 0.3 + ratio * 0.35), 3.0, true)
     _draw_status_marks()

@@ -163,6 +163,42 @@ func _content_box(panel: Panel, px: int, separation: int = 5) -> VBoxContainer:
     margin.add_child(box)
     return box
 
+func _make_portrait(path: String, size: float, glow := Color(0.0, 0.0, 0.0, 0.0)) -> Panel:
+    var frame := Panel.new()
+    frame.custom_minimum_size = Vector2(size, size)
+    frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    frame.add_theme_stylebox_override("panel", UI.panel_style(
+        Color(0.025, 0.07, 0.08, 1.0),
+        Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.7),
+        5, 1
+    ))
+    if glow.a > 0.0:
+        var halo := TextureRect.new()
+        halo.texture = ArtFX.glow_texture()
+        halo.material = ArtFX.additive_material()
+        halo.modulate = glow
+        halo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        halo.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        halo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+        halo.offset_left = -size * 0.45
+        halo.offset_top = -size * 0.45
+        halo.offset_right = size * 0.45
+        halo.offset_bottom = size * 0.45
+        frame.add_child(halo)
+    var art := TextureRect.new()
+    art.texture = load(path)
+    art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+    art.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+    art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    art.offset_left = 2.0
+    art.offset_top = 2.0
+    art.offset_right = -2.0
+    art.offset_bottom = -2.0
+    frame.add_child(art)
+    return frame
+
 func _animate_panel(panel: Control, content: Control, key: String) -> void:
     var old: Tween = _panel_tweens.get(key, null)
     if old != null and old.is_valid():
@@ -269,16 +305,30 @@ func _build_stats_panel() -> void:
 
     var box := _content_box(stats_panel, 13, 5)
 
+    var top_row := HBoxContainer.new()
+    top_row.add_theme_constant_override("separation", 10)
+    top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    box.add_child(top_row)
+
+    top_row.add_child(_make_portrait("res://assets/sprites/player.png", 52.0, Color(0.4, 1.0, 0.9, 0.22)))
+
+    var hp_column := VBoxContainer.new()
+    hp_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    hp_column.add_theme_constant_override("separation", 3)
+    hp_column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    top_row.add_child(hp_column)
+
     var hp_row := HBoxContainer.new()
     hp_row.add_theme_constant_override("separation", 8)
     hp_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hp_row.add_child(UI.label("生命", 13, UI.MUTED))
     health_label = UI.label("100 / 100", 27, UI.TEXT, true)
     hp_row.add_child(health_label)
-    box.add_child(hp_row)
+    hp_column.add_child(hp_row)
 
     hp_bar = ProgressBar.new()
-    hp_bar.custom_minimum_size = Vector2(304.0, 14.0)
+    hp_bar.custom_minimum_size = Vector2(0.0, 14.0)
+    hp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     hp_bar.max_value = 100.0
     hp_bar.value = 100.0
     hp_bar.show_percentage = false
@@ -296,7 +346,7 @@ func _build_stats_panel() -> void:
     hp_ticks.set_script(load("res://scripts/bar_ticks.gd"))
     hp_ticks.set("segments", 10)
     hp_bar.add_child(hp_ticks)
-    box.add_child(hp_bar)
+    hp_column.add_child(hp_bar)
 
     var stage_row := HBoxContainer.new()
     stage_row.add_theme_constant_override("separation", 8)
@@ -389,6 +439,18 @@ func _build_boss_bar() -> void:
     combat_ui.add_child(boss_bar)
 
     var box := _content_box(boss_bar, 7, 3)
+    var main_row := HBoxContainer.new()
+    main_row.add_theme_constant_override("separation", 8)
+    main_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    box.add_child(main_row)
+    main_row.add_child(_make_portrait("res://assets/sprites/boss.png", 38.0, Color(1.0, 0.35, 0.2, 0.2)))
+
+    var column := VBoxContainer.new()
+    column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    column.add_theme_constant_override("separation", 2)
+    column.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    main_row.add_child(column)
+
     var row := HBoxContainer.new()
     row.add_theme_constant_override("separation", 8)
     row.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -398,17 +460,18 @@ func _build_boss_bar() -> void:
     spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     row.add_child(spacer)
     row.add_child(UI.label("机关核心", 10, UI.MUTED))
-    box.add_child(row)
+    column.add_child(row)
 
     boss_bar_value = ProgressBar.new()
-    boss_bar_value.custom_minimum_size = Vector2(506.0, 16.0)
+    boss_bar_value.custom_minimum_size = Vector2(0.0, 16.0)
+    boss_bar_value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     boss_bar_value.max_value = 100.0
     boss_bar_value.value = 100.0
     boss_bar_value.show_percentage = false
     boss_bar_value.mouse_filter = Control.MOUSE_FILTER_IGNORE
     boss_bar_value.add_theme_stylebox_override("background", UI.panel_style(Color(0.08, 0.025, 0.025, 1.0), Color(0.38, 0.12, 0.10, 1.0), 7, 1))
     boss_bar_value.add_theme_stylebox_override("fill", UI.panel_style(UI.RED, Color("#ff9a8f"), 7, 0))
-    box.add_child(boss_bar_value)
+    column.add_child(boss_bar_value)
     UI.add_corners(boss_bar, Color("#c76b5f"))
 
 func _build_weapon_bar() -> void:

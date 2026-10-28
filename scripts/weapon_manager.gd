@@ -51,12 +51,23 @@ var hammer_effects: Array = []
 var elixir_timer := 0.0
 var poison_fields: Array = []
 var beams: Array = []
+var orbiter_glows: Array = []
+var turret_glows: Array = []
 
 func _ready() -> void:
     player = get_parent()
+    for _index in range(3):
+        var glow := ArtFX.add_glow(self, Color(0.3, 0.95, 1.0), 26.0, 0.24, 1)
+        glow.visible = false
+        orbiter_glows.append(glow)
+    for _index in range(2):
+        var glow := ArtFX.add_glow(self, Color(0.45, 1.0, 1.0), 24.0, 0.22, 1)
+        glow.visible = false
+        turret_glows.append(glow)
 
 func _process(delta: float) -> void:
     if player == null or player.is_dead:
+        _hide_glows()
         return
     _update_turrets(delta)
     _update_orbiter(delta)
@@ -65,7 +76,36 @@ func _process(delta: float) -> void:
     _update_hammer(delta)
     _update_elixir(delta)
     _update_effects(delta)
+    _sync_glows()
     queue_redraw()
+
+func _hide_glows() -> void:
+    for glow in orbiter_glows:
+        glow.visible = false
+    for glow in turret_glows:
+        glow.visible = false
+
+func _sync_glows() -> void:
+    var pulse := 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.004)
+    var orbiter_color := Color(1.0, 0.55, 0.22) if _legendary("maple") else Color(0.3, 0.95, 1.0)
+    for index in range(orbiter_glows.size()):
+        var glow: Sprite2D = orbiter_glows[index]
+        if index < orbiter_positions.size():
+            glow.visible = true
+            glow.position = to_local(orbiter_positions[index])
+            glow.modulate = Color(orbiter_color.r, orbiter_color.g, orbiter_color.b, 0.18 + pulse * 0.1)
+        else:
+            glow.visible = false
+
+    var turret_color := Color(1.0, 0.45, 0.75) if _legendary("peony") else Color(0.45, 1.0, 1.0)
+    for index in range(turret_glows.size()):
+        var glow: Sprite2D = turret_glows[index]
+        if index < turrets.size():
+            glow.visible = true
+            glow.position = to_local(turrets[index]["pos"])
+            glow.modulate = Color(turret_color.r, turret_color.g, turret_color.b, 0.16 + pulse * 0.08)
+        else:
+            glow.visible = false
 
 func _update_turrets(delta: float) -> void:
     var quality := _q("peony")
@@ -110,6 +150,8 @@ func _turret_fire(turret: Dictionary, target, quality: int) -> void:
     else:
         _damage_enemy(target, damage)
         _add_beam([from, to], Color(0.45, 1.0, 1.0, 0.85), 3.0, 0.07)
+    var flash_color := Color(1.0, 0.4, 0.72) if quality >= MAX_QUALITY else Color(0.45, 1.0, 1.0)
+    ArtFX.flash_at(get_tree().current_scene, from + turret["aim"] * 22.0, flash_color, 22.0, 0.1)
     Audio.play("turret", -24.0)
 
 func _update_orbiter(delta: float) -> void:
@@ -130,8 +172,11 @@ func _update_orbiter(delta: float) -> void:
     if orbiter_tick <= 0.0:
         orbiter_tick = _orbiter_tick_interval(quality)
         var hit_any := false
+        var blade_color := Color(1.0, 0.55, 0.2) if quality >= MAX_QUALITY else Color(0.3, 0.95, 1.0)
         for blade_position in orbiter_positions:
             var hit_enemies: Array = _enemies_in_radius(blade_position, _orbiter_hit_radius(quality))
+            if not hit_enemies.is_empty():
+                ArtFX.flash_at(get_tree().current_scene, blade_position, blade_color, 18.0, 0.1)
             for enemy in hit_enemies:
                 _damage_enemy(enemy, _orbiter_damage(quality))
                 _apply_knockback(enemy, 14.0)
@@ -213,6 +258,7 @@ func _update_pierce(delta: float) -> void:
     if quality >= MAX_QUALITY:
         color = Color(0.85, 0.8, 1.0, 0.95)
     _add_beam([start, end], color, 4.0, 0.10)
+    ArtFX.flash_at(get_tree().current_scene, start + direction * 34.0, color, 24.0, 0.12)
     Audio.play("pierce", -20.0)
 
 func _update_hammer(delta: float) -> void:
@@ -236,6 +282,7 @@ func _update_hammer(delta: float) -> void:
         "life": 0.30,
         "radius": radius,
     })
+    ArtFX.flash_at(get_tree().current_scene, player.global_position, Color(1.0, 0.75, 0.3), radius * 0.9, 0.22)
     Fx.shake(4.0, 0.12)
     Audio.play("explode", -22.0)
 
@@ -262,6 +309,7 @@ func _update_elixir(delta: float) -> void:
         "radius": radius,
         "damage": damage,
     })
+    ArtFX.flash_at(get_tree().current_scene, pos, Color(0.45, 1.0, 0.35), radius * 0.7, 0.24)
     Audio.play("orbiter", -26.0)
 
 func _update_effects(delta: float) -> void:

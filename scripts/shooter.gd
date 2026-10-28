@@ -19,6 +19,35 @@ func _ready() -> void:
     health_bar_color = Color("#e9d5ff")
     death_color = Color("#c084fc")
 
+func _art_texture_path() -> String:
+    return "res://assets/sprites/shooter.png"
+
+func _art_size() -> float:
+    return 74.0
+
+func _art_glow_color() -> Color:
+    return Color(0.78, 0.42, 1.0)
+
+func _art_glow_radius() -> float:
+    return 50.0
+
+func _art_glow_power() -> float:
+    return 0.18
+
+func _art_turns_to_target() -> bool:
+    return true
+
+func _art_bob_rate() -> float:
+    return 5.0
+
+func _art_bob_size() -> float:
+    return 1.2
+
+func _art_glow_boost() -> float:
+    if windup > 0.0:
+        return 1.0 + (1.0 - clampf(windup / 0.35, 0.0, 1.0)) * 1.8
+    return 1.0
+
 func _physics_process(delta: float) -> void:
     _tick_status(delta)
     if not active or player == null or not is_instance_valid(player) or player.is_dead:
@@ -74,39 +103,16 @@ func _shoot(direction: Vector2) -> void:
     projectile.damage = projectile_damage
     shots_fired += 1
     Audio.play("enemy_shot", -22.0)
+    ArtFX.flash_at(get_tree().current_scene, global_position + direction * 30.0, Color(0.8, 0.45, 1.0), 26.0, 0.14)
 
 func _draw() -> void:
-    var body_color := Color("#a855f7")
-    if damage_flash > 0.0:
-        body_color = Color.WHITE
-
-    draw_set_transform(Vector2(0.0, 15.0), 0.0, Vector2(1.0, 0.4))
-    draw_circle(Vector2.ZERO, 17.0, Color(0.0, 0.0, 0.0, 0.26))
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
     var aim := Vector2.RIGHT
-    if player != null and is_instance_valid(player):
+    if _is_player_valid():
         aim = (player.global_position - global_position).normalized()
-    var barrel := aim * (25.0 - windup * 8.0)
-    draw_line(Vector2.ZERO, barrel, Color("#e9d5ff"), 4.0, true)
-    draw_circle(barrel, 3.4, Color("#f5d0fe"))
-
-    _draw_gear(Vector2.ZERO, 18.0, 10, Color(0.62, 0.38, 0.78, 0.85), anim_time * 0.9)
-    draw_colored_polygon(
-        PackedVector2Array([
-            Vector2(0.0, -15.0),
-            Vector2(13.0, 0.0),
-            Vector2(0.0, 15.0),
-            Vector2(-13.0, 0.0),
-        ]),
-        body_color
-    )
-    draw_circle(Vector2.ZERO, 6.0, Color("#f5d0fe"))
-    draw_circle(Vector2.ZERO, 3.0, Color("#6b21a8"))
 
     if windup > 0.0:
         var charge := 1.0 - clampf(windup / 0.35, 0.0, 1.0)
-        draw_arc(Vector2.ZERO, 23.0, 0.0, TAU, 32, Color(1.0, 0.85, 0.2, 0.9), 3.0, true)
-        draw_circle(aim * 25.0, 4.0 * charge, Color(1.0, 0.9, 0.35, 0.85))
+        draw_arc(Vector2.ZERO, 32.0, 0.0, TAU, 32, Color(1.0, 0.85, 0.2, 0.45 + charge * 0.4), 2.5, true)
+        draw_circle(aim * 30.0, 3.0 + charge * 3.5, Color(1.0, 0.9, 0.35, 0.85))
     _draw_status_marks()
-    _draw_health_bar(36.0, -30.0)
+    _draw_health_bar()

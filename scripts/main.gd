@@ -415,6 +415,7 @@ func _spawn_treasure() -> void:
     )
     imp.died.connect(_on_enemy_died.bind(false))
     Fx.burst(imp.global_position, Color("#fbbf24"), 12)
+    ArtFX.flash_at(get_tree().current_scene, imp.global_position, Color(1.0, 0.85, 0.35), 64.0, 0.32)
     Audio.play("wave_start", -18.0)
     hud.show_notice("机关灵出现")
 
@@ -1211,6 +1212,12 @@ func _run_smoke_test() -> void:
     status_enemy.coin_drop = 0
     enemies.add_child(status_enemy)
     status_enemy.global_position = Vector2(420.0, 520.0)
+    if player.art == null or player.art.texture == null:
+        _fail_test("player sprite art missing")
+        return
+    if status_enemy.art == null or status_enemy.art.texture == null:
+        _fail_test("enemy sprite art missing")
+        return
     status_enemy.apply_slow(1.0, 0.7)
     if not is_equal_approx(status_enemy.speed_multiplier(), 0.7):
         _fail_test("enemy slow not applied")

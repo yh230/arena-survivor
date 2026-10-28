@@ -7,15 +7,21 @@ var player = null
 var pickup_radius := 60.0
 var lifetime := 25.0
 var magnet_speed := 0.0
+var _glow: Sprite2D
+var _pulse := 0.0
 
 func setup(coin_value: int, target_player, radius: float) -> void:
     value = coin_value
     player = target_player
     pickup_radius = radius
     add_to_group("coin")
+    _glow = ArtFX.add_glow(self, Color(1.0, 0.78, 0.3), 20.0, 0.35, -1)
     queue_redraw()
 
 func _physics_process(delta: float) -> void:
+    _pulse += delta
+    if _glow != null:
+        _glow.modulate.a = 0.28 + 0.14 * sin(_pulse * 5.0)
     lifetime -= delta
     if lifetime <= 0.0:
         queue_free()

@@ -18,6 +18,29 @@ func _ready() -> void:
     death_color = Color("#fb923c")
     death_burst = 10
 
+func _art_texture_path() -> String:
+    return "res://assets/sprites/exploder.png"
+
+func _art_size() -> float:
+    return 62.0
+
+func _art_glow_color() -> Color:
+    return Color(1.0, 0.5, 0.12)
+
+func _art_glow_radius() -> float:
+    return 40.0
+
+func _art_glow_power() -> float:
+    return 0.22
+
+func _art_bob_rate() -> float:
+    return 7.0
+
+func _art_glow_boost() -> float:
+    if fuse_timer >= 0.0:
+        return 1.0 + (1.0 - clampf(fuse_timer / fuse_time, 0.0, 1.0)) * 1.4
+    return 1.0
+
 func _physics_process(delta: float) -> void:
     _tick_status(delta)
     if not active:
@@ -68,6 +91,7 @@ func _explode() -> void:
                 player.take_damage(explosion_damage)
     Audio.play("explode", -4.0)
     Fx.burst(global_position, Color("#fb923c"), 14)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.55, 0.15), 130.0, 0.38)
     Fx.shake(10.0, 0.22)
     died.emit(global_position, coin_drop)
     explosion_timer = 0.3
@@ -80,37 +104,12 @@ func _draw() -> void:
         draw_arc(Vector2.ZERO, explosion_radius, 0.0, TAU, 64, Color(1.0, 0.45, 0.1, 0.8 * alpha), 4.0, true)
         return
 
-    var body_color := Color("#f97316")
-    if damage_flash > 0.0:
-        body_color = Color.WHITE
-
-    draw_set_transform(Vector2(0.0, 16.0), 0.0, Vector2(1.0, 0.4))
-    draw_circle(Vector2.ZERO, 18.0, Color(0.0, 0.0, 0.0, 0.28))
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
     var pulse := 0.5 + 0.5 * sin(anim_time * (8.0 if fuse_timer >= 0.0 else 3.0))
-    draw_circle(Vector2.ZERO, 22.0 + pulse * 2.0, Color(1.0, 0.35, 0.08, 0.10 + pulse * 0.08))
-    _draw_gear(Vector2.ZERO, 18.0, 8, Color(0.72, 0.38, 0.16, 0.8), -anim_time * 1.2)
-    draw_colored_polygon(
-        PackedVector2Array([
-            Vector2(0.0, -17.0),
-            Vector2(15.0, -5.0),
-            Vector2(12.0, 13.0),
-            Vector2(-12.0, 13.0),
-            Vector2(-15.0, -5.0),
-        ]),
-        body_color
-    )
-    draw_circle(Vector2.ZERO, 8.0, Color("#7c2d12"))
-    draw_circle(Vector2.ZERO, 4.0, Color("#fde68a"))
-
-    var spark := Vector2(9.0, -22.0) + Vector2(sin(anim_time * 12.0) * 2.0, cos(anim_time * 9.0) * 2.0)
-    draw_line(Vector2(5.0, -14.0), spark, Color("#92400e"), 2.0, true)
-    draw_circle(spark, 3.0 + pulse * 1.5, Color(1.0, 0.85, 0.25, 0.85))
-
     if fuse_timer >= 0.0:
         var progress: float = 1.0 - clampf(fuse_timer / fuse_time, 0.0, 1.0)
-        draw_arc(Vector2.ZERO, 24.0 + progress * 10.0, 0.0, TAU, 32, Color(1.0, 0.2, 0.1, 0.9), 3.0, true)
+        draw_arc(Vector2.ZERO, 30.0 + progress * 12.0, 0.0, TAU, 32, Color(1.0, 0.2, 0.1, 0.9), 3.0, true)
+    else:
+        draw_arc(Vector2.ZERO, 32.0, 0.0, TAU, 28, Color(1.0, 0.45, 0.1, 0.16 + pulse * 0.16), 1.5, true)
 
     _draw_status_marks()
-    _draw_health_bar(36.0, -34.0)
+    _draw_health_bar(42.0, -38.0)

@@ -26,13 +26,57 @@ var lifesteal := 0
 var dash_time := 0.0
 var dash_cooldown_left := 0.0
 var dash_direction := Vector2.UP
+var art: Sprite2D
+var art_texture: Texture2D
+var core_glow: Sprite2D
+var aura: Sprite2D
+var _shadow: Sprite2D
 var _anim := 0.0
 var _dust_timer := 0.0
+var _dash_ghost_timer := 0.0
 
 func _ready() -> void:
     health = max_health
     add_to_group("player")
+    _setup_art()
     queue_redraw()
+
+func _setup_art() -> void:
+    art_texture = load("res://assets/sprites/player.png")
+    _shadow = ArtFX.add_shadow(self, 68.0, 26.0, 28.0, 0.4)
+    aura = ArtFX.add_glow(self, Color(0.2, 0.95, 0.85), 82.0, 0.17, -3)
+    art = Sprite2D.new()
+    art.texture = art_texture
+    art.material = ArtFX.flash_material()
+    art.z_index = -1
+    art.z_as_relative = true
+    add_child(art)
+    core_glow = ArtFX.add_glow(self, Color(0.4, 1.0, 0.95), 33.0, 0.34, 1)
+
+func _update_art(delta: float) -> void:
+    if art == null:
+        return
+    var material := art.material as ShaderMaterial
+    if material != null:
+        material.set_shader_parameter("flash", clampf(hit_flash / 0.15, 0.0, 1.0) * 0.6)
+    if is_dead:
+        return
+
+    var target_tilt := clampf(facing.x, -1.0, 1.0) * 0.16
+    art.rotation = lerp_angle(art.rotation, target_tilt, clampf(delta * 12.0, 0.0, 1.0))
+    art.flip_h = facing.x < -0.01
+    art.position.y = sin(_anim * 4.2) * 1.6
+    var pulse := 0.5 + 0.5 * sin(_anim * 3.6)
+    if core_glow != null:
+        core_glow.modulate.a = 0.24 + pulse * 0.16
+    if aura != null:
+        aura.modulate.a = 0.12 + pulse * 0.07
+
+    if dash_time > 0.0:
+        _dash_ghost_timer -= delta
+        if _dash_ghost_timer <= 0.0:
+            _dash_ghost_timer = 0.035
+            ArtFX.afterimage(get_tree().current_scene, art_texture, art.global_position, art.rotation, 1.0, Color(0.25, 1.0, 0.9, 0.32))
 
 func _physics_process(delta: float) -> void:
     if is_dead:
@@ -68,6 +112,7 @@ func _physics_process(delta: float) -> void:
     if attack_cooldown <= 0.0:
         _try_auto_attack()
 
+    _update_art(delta)
     queue_redraw()
 
 func _get_move_direction() -> Vector2:
@@ -117,12 +162,13 @@ func _try_auto_attack() -> void:
         var damage := int(round(float(projectile_damage) * (CRIT_MULT if is_crit else 1.0)))
         var projectile = projectile_scene.instantiate()
         get_parent().get_node("Projectiles").add_child(projectile)
-        projectile.global_position = global_position + shot_direction * 24.0
+        projectile.global_position = global_position + shot_direction * 36.0
         projectile.direction = shot_direction
         projectile.damage = damage
         projectile.crit = is_crit
         projectile.source = self
     Audio.play("shoot", -18.0)
+    ArtFX.flash_at(get_tree().current_scene, global_position + base_direction * 44.0, Color(0.45, 1.0, 0.95), 24.0, 0.12)
     attack_cooldown = attack_interval
 
 func _find_nearest_enemy():
@@ -152,6 +198,15 @@ func take_damage(amount: int) -> void:
 func _die() -> void:
     is_dead = true
     velocity = Vector2.ZERO
+    if art != null:
+        art.modulate = Color(0.42, 0.45, 0.48, 1.0)
+        art.rotation = 0.0
+        art.position = Vector2.ZERO
+    if core_glow != null:
+        core_glow.visible = false
+    if aura != null:
+        aura.modulate.a = 0.0
+    Fx.burst(global_position, Color("#5eead4"), 12)
     queue_redraw()
     died.emit()
 
@@ -167,7 +222,11 @@ func try_dash() -> void:
     facing = dash_direction
     dash_time = dash_duration
     dash_cooldown_left = dash_cooldown
+    _dash_ghost_timer = 0.0
     Audio.play("dash", -8.0)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(0.3, 1.0, 0.9), 36.0, 0.18)
+    if art != null and art_texture != null:
+        ArtFX.afterimage(get_tree().current_scene, art_texture, art.global_position, art.rotation, 1.0, Color(0.3, 1.0, 0.9, 0.4))
     queue_redraw()
 
 func can_dash() -> bool:
@@ -212,50 +271,10 @@ func on_projectile_hit() -> void:
 
 func _draw() -> void:
     if is_dead:
-        draw_circle(Vector2(0.0, 14.0), 20.0, Color(0.0, 0.0, 0.0, 0.3))
-        draw_circle(Vector2.ZERO, 20.0, Color(0.32, 0.36, 0.40, 0.9))
         return
 
-    if dash_time > 0.0:
-        for index in range(1, 5):
-            var ghost := -dash_direction * float(index) * 14.0
-            draw_circle(ghost, 19.0 - float(index) * 3.0, Color(0.20, 0.95, 0.85, 0.14))
-        draw_circle(Vector2.ZERO, 30.0, Color(0.25, 1.0, 0.90, 0.22))
-
-    draw_set_transform(Vector2(0.0, 17.0), 0.0, Vector2(1.0, 0.42))
-    draw_circle(Vector2.ZERO, 21.0, Color(0.0, 0.0, 0.0, 0.30))
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-
-    var bob := sin(_anim * 3.4) * 1.4
-    var spin := _anim * 0.8
-    draw_set_transform(Vector2(0.0, bob), 0.0, Vector2.ONE)
-
-    var scarf_wave := sin(_anim * 6.0) * 3.0
-    var back := -facing * 15.0
-    draw_line(back, back - facing * 9.0 + Vector2(scarf_wave, 7.0), Color(0.16, 0.78, 0.71, 0.75), 5.0, true)
-    draw_line(back - facing * 9.0, back - facing * 18.0 + Vector2(scarf_wave * 1.6, 11.0), Color(0.10, 0.55, 0.52, 0.65), 3.0, true)
-
-    _draw_ring(Vector2.ZERO, 23.0, 10, Color("#d8b56b"), spin)
-    draw_circle(Vector2.ZERO, 18.0, Color("#0a2224"))
-    draw_arc(Vector2.ZERO, 17.0, spin + 0.4, spin + 2.4, 14, Color("#f1d99b"), 3.0, true)
-    draw_arc(Vector2.ZERO, 13.5, spin + 3.4, spin + 5.0, 12, Color("#8a6a34"), 2.0, true)
-    draw_circle(Vector2.ZERO, 11.0, Color("#0d9488"))
-    draw_circle(Vector2.ZERO, 7.5, Color("#5eead4"))
-    draw_circle(Vector2.ZERO, 3.6, Color("#ecfeff"))
-
-    var blade_end := facing * 30.0
-    draw_line(facing * 12.0, blade_end, Color("#14b8a6"), 5.0, true)
-    draw_line(facing * 13.0, blade_end * 0.9, Color("#b9fff4"), 1.6, true)
+    var blade_end := facing * 48.0
+    draw_line(facing * 16.0, blade_end, Color(0.08, 0.55, 0.5, 0.5), 10.0, true)
+    draw_line(facing * 18.0, blade_end, Color("#14b8a6"), 5.0, true)
+    draw_line(facing * 19.0, blade_end * 0.92, Color("#b9fff4"), 1.6, true)
     draw_circle(blade_end, 3.4, Color("#f1d99b"))
-
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
-    if hit_flash > 0.0:
-        draw_circle(Vector2.ZERO, 26.0, Color(1.0, 1.0, 1.0, 0.28))
-
-func _draw_ring(center: Vector2, radius: float, teeth: int, color: Color, rotation: float) -> void:
-    draw_arc(center, radius, 0.0, TAU, 32, Color(color.r, color.g, color.b, 0.9), 2.0, true)
-    for index in range(teeth):
-        var angle := rotation + TAU * float(index) / float(teeth)
-        var inner := center + Vector2.from_angle(angle) * (radius - 2.0)
-        var outer := center + Vector2.from_angle(angle) * (radius + 4.0)
-        draw_line(inner, outer, Color(color.r, color.g, color.b, 0.85), 3.0, true)
