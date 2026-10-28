@@ -471,8 +471,6 @@ func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave 
         wave_killed = mini(wave_total, wave_killed + 1)
         wave_remaining = maxi(0, wave_total - wave_killed)
         hud.set_wave_progress(wave_remaining, wave_total, false)
-        if wave_remaining == 0:
-            hud.show_notice("清剿完毕")
     var base_value := _coin_value_for(wave)
     for index in range(coin_count):
         var coin = COIN_SCRIPT.new()
@@ -514,7 +512,8 @@ func _open_shop() -> void:
     var heal_note := ""
     if last_heal_amount > 0:
         heal_note = "生命恢复 +%d · " % last_heal_amount
-    shop_message = heal_note + "花费金币，然后开始下一波"
+    var clear_note := "清剿完毕 · " if not boss_wave and wave_remaining == 0 else ""
+    shop_message = clear_note + heal_note + "花费金币，然后开始下一波"
     _generate_offers()
     if wave == 1:
         _ensure_starter_offer()
