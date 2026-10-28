@@ -39,7 +39,7 @@ func _steer(delta: float) -> void:
             repulsion += offset.normalized() * (1.0 - distance / 260.0)
 
     orbit_angle += delta * 0.8
-    var target := Vector2(640.0, 360.0) + Vector2.from_angle(orbit_angle) * 270.0
+    var target := Vector2(640.0, 360.0) + Vector2.from_angle(orbit_angle) * 190.0
     var orbit_direction := (target - position).normalized()
     var direction := orbit_direction * 0.55 + repulsion * 1.3
 
@@ -56,8 +56,8 @@ func _steer(delta: float) -> void:
         direction = orbit_direction
     direction = direction.normalized()
     joystick.set_test_vector(direction)
-    if nearest_distance < 105.0 and player.can_dash():
-        player.try_dash()
+    if player.can_cast_skill() and nearest_distance < 620.0:
+        player.try_cast_skill()
 
 func _run_all() -> void:
     await get_tree().process_frame

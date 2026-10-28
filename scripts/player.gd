@@ -3,29 +3,25 @@ extends CharacterBody2D
 signal health_changed(current: int, maximum: int)
 signal died
 
-@export var move_speed := 340.0
-@export var dash_speed := 900.0
-@export var dash_duration := 0.14
-@export var dash_cooldown := 2.5
-@export var max_health := 100
-@export var attack_interval := 0.40
-@export var attack_range := 520.0
-@export var projectile_damage := 10
-@export var projectile_scene: PackedScene
-const CRIT_CHANCE := 0.12
-const CRIT_MULT := 1.8
+const GRENADE_SCRIPT := preload("res://scripts/hero_grenade.gd")
+const SKILL_COOLDOWN := 8.0
+const SKILL_RANGE := 620.0
+const SKILL_RADIUS := 110.0
+const SKILL_FUSE := 0.6
+const SKILL_SLOW := 0.35
+const SKILL_KNOCKBACK := 60.0
+const INVULN_TIME := 0.5
 
-var health := 100
+@export var move_speed := 360.0
+@export var max_health := 120
+
+var health := 120
 var is_dead := false
-var attack_cooldown := 0.0
 var hit_flash := 0.0
+var invuln_time := 0.0
+var skill_cooldown_left := 0.0
 var joystick = null
 var facing := Vector2.UP
-var projectile_count := 1
-var lifesteal := 0
-var dash_time := 0.0
-var dash_cooldown_left := 0.0
-var dash_direction := Vector2.UP
 var art: Sprite2D
 var art_texture: Texture2D
 var core_glow: Sprite2D
@@ -33,7 +29,8 @@ var aura: Sprite2D
 var _shadow: Sprite2D
 var _anim := 0.0
 var _dust_timer := 0.0
-var _dash_ghost_timer := 0.0
+var _wave := 1
+var _chapter := 1
 
 func _ready() -> void:
     health = max_health
@@ -72,46 +69,28 @@ func _update_art(delta: float) -> void:
     if aura != null:
         aura.modulate.a = 0.12 + pulse * 0.07
 
-    if dash_time > 0.0:
-        _dash_ghost_timer -= delta
-        if _dash_ghost_timer <= 0.0:
-            _dash_ghost_timer = 0.035
-            ArtFX.afterimage(get_tree().current_scene, art_texture, art.global_position, art.rotation, 1.0, Color(0.25, 1.0, 0.9, 0.32))
-
 func _physics_process(delta: float) -> void:
     if is_dead:
         return
 
-    dash_cooldown_left = maxf(0.0, dash_cooldown_left - delta)
+    invuln_time = maxf(0.0, invuln_time - delta)
+    skill_cooldown_left = maxf(0.0, skill_cooldown_left - delta)
     _anim += delta
     _dust_timer = maxf(0.0, _dust_timer - delta)
-    if Input.is_key_pressed(KEY_SPACE):
-        try_dash()
+    if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_E):
+        try_cast_skill()
 
-    if dash_time > 0.0:
-        velocity = dash_direction * dash_speed
-        move_and_slide()
-        _clamp_to_arena()
-        dash_time = maxf(0.0, dash_time - delta)
-        facing = dash_direction
-        if dash_time == 0.0:
-            velocity = Vector2.ZERO
-    else:
-        var direction: Vector2 = _get_move_direction()
-        velocity = direction * move_speed
-        move_and_slide()
-        _clamp_to_arena()
-        if direction.length_squared() > 0.01:
-            facing = direction.normalized()
-            if _dust_timer <= 0.0:
-                _dust_timer = 0.24
-                Fx.burst(global_position - facing * 12.0 + Vector2(0.0, 16.0), Color(0.45, 0.68, 0.64, 0.35), 2)
+    var direction: Vector2 = _get_move_direction()
+    velocity = direction * move_speed
+    move_and_slide()
+    _clamp_to_arena()
+    if direction.length_squared() > 0.01:
+        facing = direction.normalized()
+        if _dust_timer <= 0.0:
+            _dust_timer = 0.24
+            Fx.burst(global_position - facing * 12.0 + Vector2(0.0, 16.0), Color(0.45, 0.68, 0.64, 0.35), 2)
 
-    attack_cooldown = maxf(0.0, attack_cooldown - delta)
     hit_flash = maxf(0.0, hit_flash - delta)
-    if attack_cooldown <= 0.0:
-        _try_auto_attack()
-
     _update_art(delta)
     queue_redraw()
 
@@ -143,50 +122,67 @@ func _clamp_to_arena() -> void:
     global_position.x = clampf(global_position.x, margin, view_size.x - margin)
     global_position.y = clampf(global_position.y, margin, view_size.y - margin)
 
-func _try_auto_attack() -> void:
-    var target = _find_nearest_enemy()
-    if target == null:
-        return
+func set_wave_info(wave_no: int, chapter_no: int) -> void:
+    _wave = wave_no
+    _chapter = chapter_no
 
-    var distance: float = global_position.distance_to(target.global_position)
-    if distance > attack_range or projectile_scene == null:
-        return
+func reset_for_run() -> void:
+    is_dead = false
+    max_health = 120
+    health = 120
+    move_speed = 360.0
+    invuln_time = 0.0
+    skill_cooldown_left = 0.0
+    hit_flash = 0.0
+    health_changed.emit(health, max_health)
 
-    var base_direction: Vector2 = (target.global_position - global_position).normalized()
-    var shots := maxi(1, projectile_count)
-    var spread := deg_to_rad(6.0)
-    for index in range(shots):
-        var angle_offset := (float(index) - (float(shots) - 1.0) * 0.5) * spread
-        var shot_direction := base_direction.rotated(angle_offset)
-        var is_crit := randf() < CRIT_CHANCE
-        var damage := int(round(float(projectile_damage) * (CRIT_MULT if is_crit else 1.0)))
-        var projectile = projectile_scene.instantiate()
-        get_parent().get_node("Projectiles").add_child(projectile)
-        projectile.global_position = global_position + shot_direction * 36.0
-        projectile.direction = shot_direction
-        projectile.damage = damage
-        projectile.crit = is_crit
-        projectile.source = self
-    Audio.play("shoot", -18.0)
-    ArtFX.flash_at(get_tree().current_scene, global_position + base_direction * 44.0, Color(0.45, 1.0, 0.95), 24.0, 0.12)
-    attack_cooldown = attack_interval
+func can_cast_skill() -> bool:
+    return not is_dead and skill_cooldown_left <= 0.0
 
-func _find_nearest_enemy():
-    var nearest = null
-    var best_distance := INF
+func get_skill_cooldown_remaining() -> float:
+    return skill_cooldown_left
+
+func get_skill_cooldown_total() -> float:
+    return SKILL_COOLDOWN
+
+func try_cast_skill() -> bool:
+    if not can_cast_skill():
+        return false
+    var target = _nearest_enemy(global_position, SKILL_RANGE)
+    var target_pos: Vector2 = global_position + facing * 220.0
+    if target != null:
+        target_pos = target.global_position
+    var damage := 80 + 8 * _wave + 15 * (_chapter - 1)
+    var grenade = GRENADE_SCRIPT.new()
+    grenade.z_index = 6
+    get_tree().current_scene.add_child(grenade)
+    grenade.global_position = global_position + facing * 24.0
+    grenade.setup(target_pos, damage, SKILL_RADIUS, 1.5, SKILL_SLOW, SKILL_KNOCKBACK, SKILL_FUSE)
+    skill_cooldown_left = SKILL_COOLDOWN
+    var manager = get_node_or_null("WeaponManager")
+    if manager != null and manager.has_method("set_overclock"):
+        manager.set_overclock(4.0)
+    Audio.play("dash", -8.0)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(0.3, 1.0, 0.9), 36.0, 0.18)
+    return true
+
+func _nearest_enemy(from: Vector2, max_range: float):
+    var best = null
+    var best_distance := max_range
     for node in get_tree().get_nodes_in_group("enemies"):
-        if not is_instance_valid(node):
+        if not is_instance_valid(node) or node.is_queued_for_deletion():
             continue
-        var distance: float = global_position.distance_squared_to(node.global_position)
+        var distance: float = from.distance_to(node.global_position)
         if distance < best_distance:
             best_distance = distance
-            nearest = node
-    return nearest
+            best = node
+    return best
 
 func take_damage(amount: int) -> void:
-    if is_dead or dash_time > 0.0:
+    if is_dead or invuln_time > 0.0:
         return
     health = maxi(0, health - amount)
+    invuln_time = INVULN_TIME
     hit_flash = 0.15
     Audio.play("hurt", -8.0)
     Fx.damage_number(global_position + Vector2(0.0, -30.0), amount, Color("#fca5a5"))
@@ -210,71 +206,8 @@ func _die() -> void:
     queue_redraw()
     died.emit()
 
-func try_dash() -> void:
-    if is_dead or dash_cooldown_left > 0.0 or dash_time > 0.0:
-        return
-    var direction: Vector2 = _get_move_direction()
-    if direction.length_squared() < 0.01:
-        direction = facing
-    if direction.length_squared() < 0.01:
-        direction = Vector2.UP
-    dash_direction = direction.normalized()
-    facing = dash_direction
-    dash_time = dash_duration
-    dash_cooldown_left = dash_cooldown
-    _dash_ghost_timer = 0.0
-    Audio.play("dash", -8.0)
-    ArtFX.flash_at(get_tree().current_scene, global_position, Color(0.3, 1.0, 0.9), 36.0, 0.18)
-    if art != null and art_texture != null:
-        ArtFX.afterimage(get_tree().current_scene, art_texture, art.global_position, art.rotation, 1.0, Color(0.3, 1.0, 0.9, 0.4))
-    queue_redraw()
-
-func can_dash() -> bool:
-    return not is_dead and dash_time <= 0.0 and dash_cooldown_left <= 0.0
-
-func get_dash_cooldown_remaining() -> float:
-    return dash_cooldown_left
-
-func can_apply_upgrade(id: String) -> bool:
-    match id:
-        "attack_speed":
-            return attack_interval > 0.181
-        "projectiles":
-            return projectile_count < 4
-        _:
-            return true
-
-func apply_upgrade(id: String) -> void:
-    match id:
-        "damage":
-            projectile_damage += 5
-        "attack_speed":
-            attack_interval = maxf(0.18, attack_interval * 0.8)
-        "move_speed":
-            move_speed += 30.0
-        "max_health":
-            max_health += 25
-            health += 25
-            health_changed.emit(health, max_health)
-        "projectiles":
-            projectile_count = mini(4, projectile_count + 1)
-        "lifesteal":
-            lifesteal += 2
-
-func on_projectile_hit() -> void:
-    if is_dead or lifesteal <= 0:
-        return
-    var previous := health
-    health = mini(max_health, health + lifesteal)
-    if health != previous:
-        health_changed.emit(health, max_health)
-
 func _draw() -> void:
     if is_dead:
         return
-
-    var blade_end := facing * 48.0
-    draw_line(facing * 16.0, blade_end, Color(0.08, 0.55, 0.5, 0.5), 10.0, true)
-    draw_line(facing * 18.0, blade_end, Color("#14b8a6"), 5.0, true)
-    draw_line(facing * 19.0, blade_end * 0.92, Color("#b9fff4"), 1.6, true)
-    draw_circle(blade_end, 3.4, Color("#f1d99b"))
+    draw_arc(Vector2.ZERO, 25.0, 0.0, TAU, 36, Color(0.85, 0.71, 0.42, 0.32), 1.5, true)
+    draw_arc(Vector2.ZERO, 20.0, -PI * 0.25, PI * 0.25, 24, Color(0.25, 0.95, 0.85, 0.42), 2.0, true)

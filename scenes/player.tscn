@@ -1,7 +1,6 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
-[ext_resource type="PackedScene" path="res://scenes/projectile.tscn" id="2_projectile"]
 [ext_resource type="Script" path="res://scripts/weapon_manager.gd" id="3_weapons"]
 
 [sub_resource type="CircleShape2D" id="CircleShape2D_player"]
@@ -12,7 +11,6 @@ collision_layer = 1
 collision_mask = 0
 motion_mode = 1
 script = ExtResource("1_player")
-projectile_scene = ExtResource("2_projectile")
 
 [node name="CollisionShape2D" type="CollisionShape2D" parent="."]
 shape = SubResource("CircleShape2D_player")

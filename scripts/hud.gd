@@ -10,18 +10,17 @@ signal next_wave
 signal next_stage
 signal retry_stage
 signal stage_select
-signal dash_requested
+signal skill_requested
 
 const UI := preload("res://scripts/ui_forge.gd")
 const JOYSTICK_SCRIPT := preload("res://scripts/virtual_joystick.gd")
-const DASH_RING_SCRIPT := preload("res://scripts/dash_ring.gd")
+const SKILL_RING_SCRIPT := preload("res://scripts/dash_ring.gd")
 const BG_ART_PATHS := [
     "res://assets/art/bg_ch1.jpg",
     "res://assets/art/bg_ch2.jpg",
     "res://assets/art/bg_ch3.jpg",
 ]
 const STAGE_COUNT := 12
-const DASH_COOLDOWN := 2.5
 
 var root: Control
 var _bg_art: Array = []
@@ -47,10 +46,10 @@ var wave_segments: Array = []
 var weapon_slots: Array = []
 var item_slots: Array = []
 var joystick: Control
-var dash_button: Button
-var dash_ring: Control
-var dash_title: Label
-var dash_sub: Label
+var skill_button: Button
+var skill_ring: Control
+var skill_title: Label
+var skill_sub: Label
 
 var stage_panel: Control
 var stage_content: Control
@@ -109,7 +108,7 @@ var _stage_card_tween: Tween
 var _stage_current_tween: Tween
 var _current_stage_id := ""
 var _last_track_wave := -1
-var _dash_was_ready := true
+var _skill_was_ready := true
 var _animate_offers := false
 var _offer_entrance_tween: Tween
 var _last_offer_bought: Array = []
@@ -322,15 +321,15 @@ func _build_stats_panel() -> void:
     hp_row.add_theme_constant_override("separation", 8)
     hp_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hp_row.add_child(UI.label("生命", 13, UI.MUTED))
-    health_label = UI.label("100 / 100", 27, UI.TEXT, true)
+    health_label = UI.label("120 / 120", 27, UI.TEXT, true)
     hp_row.add_child(health_label)
     hp_column.add_child(hp_row)
 
     hp_bar = ProgressBar.new()
     hp_bar.custom_minimum_size = Vector2(0.0, 14.0)
     hp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-    hp_bar.max_value = 100.0
-    hp_bar.value = 100.0
+    hp_bar.max_value = 120.0
+    hp_bar.value = 120.0
     hp_bar.show_percentage = false
     hp_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.02, 0.05, 0.06, 1.0), Color(0.13, 0.25, 0.26, 1.0), 7, 1))
@@ -596,40 +595,40 @@ func _build_inputs() -> void:
     root.add_child(joystick)
     joystick.visible = false
 
-    dash_ring = Control.new()
-    dash_ring.name = "DashRing"
-    dash_ring.position = Vector2(1108.0, 548.0)
-    dash_ring.size = Vector2(124.0, 124.0)
-    dash_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    dash_ring.set_script(DASH_RING_SCRIPT)
-    root.add_child(dash_ring)
-    dash_ring.visible = false
+    skill_ring = Control.new()
+    skill_ring.name = "SkillRing"
+    skill_ring.position = Vector2(1108.0, 548.0)
+    skill_ring.size = Vector2(124.0, 124.0)
+    skill_ring.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    skill_ring.set_script(SKILL_RING_SCRIPT)
+    root.add_child(skill_ring)
+    skill_ring.visible = false
 
-    dash_button = Button.new()
-    dash_button.name = "DashButton"
-    dash_button.position = Vector2(1108.0, 548.0)
-    dash_button.size = Vector2(124.0, 124.0)
-    dash_button.text = ""
-    UI.apply_button(dash_button, "flat")
-    dash_button.pressed.connect(_on_dash_pressed)
-    root.add_child(dash_button)
-    dash_button.visible = false
+    skill_button = Button.new()
+    skill_button.name = "SkillButton"
+    skill_button.position = Vector2(1108.0, 548.0)
+    skill_button.size = Vector2(124.0, 124.0)
+    skill_button.text = ""
+    UI.apply_button(skill_button, "flat")
+    skill_button.pressed.connect(_on_skill_pressed)
+    root.add_child(skill_button)
+    skill_button.visible = false
 
-    dash_title = UI.label("冲刺", 18, UI.TEXT, true)
-    dash_title.position = Vector2(0.0, 40.0)
-    dash_title.size = Vector2(124.0, 26.0)
-    dash_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    dash_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    dash_button.add_child(dash_title)
-    dash_sub = UI.label("就绪", 10, UI.MUTED)
-    dash_sub.position = Vector2(0.0, 66.0)
-    dash_sub.size = Vector2(124.0, 16.0)
-    dash_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    dash_sub.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-    dash_button.add_child(dash_sub)
+    skill_title = UI.label("震雷", 18, UI.TEXT, true)
+    skill_title.position = Vector2(0.0, 40.0)
+    skill_title.size = Vector2(124.0, 26.0)
+    skill_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    skill_title.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    skill_button.add_child(skill_title)
+    skill_sub = UI.label("就绪", 10, UI.MUTED)
+    skill_sub.position = Vector2(0.0, 66.0)
+    skill_sub.size = Vector2(124.0, 16.0)
+    skill_sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+    skill_sub.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+    skill_button.add_child(skill_sub)
 
-func _on_dash_pressed() -> void:
-    dash_requested.emit()
+func _on_skill_pressed() -> void:
+    skill_requested.emit()
 
 func set_health(current: int, maximum: int) -> void:
     var previous := _last_health
@@ -777,21 +776,21 @@ func set_best_wave(value: int) -> void:
     _update_sub_label()
 
 func _update_sub_label() -> void:
-    sub_label.text = "敌人 %d · 无尽最佳 %d" % [_enemy_count, _best_wave]
+    sub_label.text = "机关师 +15% · 敌 %d · 无尽 %d" % [_enemy_count, _best_wave]
 
-func set_dash_state(ready: bool, remaining: float) -> void:
-    var ready_changed := ready != _dash_was_ready
-    _dash_was_ready = ready
-    dash_button.disabled = not ready
+func set_skill_state(ready: bool, remaining: float, total: float) -> void:
+    var ready_changed := ready != _skill_was_ready
+    _skill_was_ready = ready
+    skill_button.disabled = not ready
     var ratio := 1.0
     if not ready:
-        ratio = 1.0 - clampf(remaining / DASH_COOLDOWN, 0.0, 1.0)
-    dash_ring.set("ratio", ratio)
-    dash_ring.queue_redraw()
-    dash_title.add_theme_color_override("font_color", UI.TEXT if ready else UI.MUTED)
-    dash_sub.text = "就绪" if ready else "%.1f 秒" % maxf(remaining, 0.0)
+        ratio = 1.0 - clampf(remaining / maxf(total, 0.01), 0.0, 1.0)
+    skill_ring.set("ratio", ratio)
+    skill_ring.queue_redraw()
+    skill_title.add_theme_color_override("font_color", UI.TEXT if ready else UI.MUTED)
+    skill_sub.text = "就绪" if ready else "%.1f 秒" % maxf(remaining, 0.0)
     if ready and ready_changed:
-        _pulse_control(dash_ring, 1.06, 0.22)
+        _pulse_control(skill_ring, 1.06, 0.22)
 
 func set_weapon_slots(slots: Array) -> void:
     for index in range(weapon_slots.size()):
@@ -1344,7 +1343,7 @@ func _build_shop() -> void:
     shop_gold_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     content.add_child(shop_gold_label)
 
-    shop_health_label = UI.label("生命 100 / 100", 11, UI.MUTED)
+    shop_health_label = UI.label("生命 120 / 120", 11, UI.MUTED)
     shop_health_label.position = Vector2(964.0, 60.0)
     shop_health_label.size = Vector2(220.0, 16.0)
     shop_health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -2064,13 +2063,13 @@ func _hide_gameplay_inputs() -> void:
     if joystick.has_method("release"):
         joystick.release()
     joystick.visible = false
-    dash_button.visible = false
-    dash_ring.visible = false
+    skill_button.visible = false
+    skill_ring.visible = false
 
 func _show_gameplay_inputs() -> void:
     joystick.visible = true
-    dash_button.visible = true
-    dash_ring.visible = true
+    skill_button.visible = true
+    skill_ring.visible = true
 
 func get_stage_button(stage_id: String) -> Button:
     return stage_buttons.get(stage_id)

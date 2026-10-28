@@ -1,5 +1,17 @@
 extends Node2D
 
+const UI := preload("res://scripts/ui_forge.gd")
+const EMPLACEMENTS := [
+    Vector2(640.0, 185.0),
+    Vector2(792.0, 272.0),
+    Vector2(792.0, 448.0),
+    Vector2(640.0, 535.0),
+    Vector2(488.0, 448.0),
+    Vector2(488.0, 272.0),
+]
+const EMPLACEMENT_NAMES := ["北台", "东北台", "东南台", "南台", "西南台", "西北台"]
+const WEAPON_DAMAGE_SCALE := 1.15
+const OVERCLOCK_MULT := 1.30
 const MAX_WEAPON_SLOTS := 6
 const MAX_ITEM_SLOTS := 6
 const MAX_QUALITY := 4
@@ -19,20 +31,25 @@ const WEAPON_DATA := {
 }
 const ITEM_ORDER := ["magnet", "boots", "holy_fire", "lucky_cat", "anvil", "jade"]
 const ITEM_DATA := {
-    "magnet": {"title": "磁铁", "desc": "拾取范围 +35/级"},
-    "boots": {"title": "疾行靴", "desc": "移动速度 +25/级"},
-    "holy_fire": {"title": "圣火", "desc": "生命上限 +15/级"},
-    "lucky_cat": {"title": "招财猫", "desc": "售价 +10% / 金币 +3% 每级"},
-    "anvil": {"title": "铁砧", "desc": "每级 1 次免费刷新"},
-    "jade": {"title": "翡翠", "desc": "金币收益 +10%/级"},
+    "magnet": {"title": "磁铁", "desc": "拾取范围 +30/级"},
+    "boots": {"title": "疾行靴", "desc": "移动速度 +22/级"},
+    "holy_fire": {"title": "圣火", "desc": "生命上限 +20/级"},
+    "lucky_cat": {"title": "招财猫", "desc": "售价 +8% / 金币 +4% 每级"},
+    "anvil": {"title": "铁砧", "desc": "每级 1 次免费刷新 · 机关伤害 +6%"},
+    "jade": {"title": "翡翠", "desc": "金币收益 +10%/级 · 暴击率 +4%/级"},
 }
 
 var player = null
 var weapon_qualities := {}
 var weapon_order: Array = []
+var weapon_slots := {}
+var slot_owners := {}
 var item_qualities := {}
 var item_order: Array = []
 var wave_power := 1.0
+var character_damage_mult := WEAPON_DAMAGE_SCALE
+var overclock_time := 0.0
+var item_stats_cache := {}
 
 var turret_timer := 0.0
 var turrets: Array = []
@@ -56,6 +73,7 @@ var turret_glows: Array = []
 
 func _ready() -> void:
     player = get_parent()
+    _refresh_item_cache()
     for _index in range(3):
         var glow := ArtFX.add_glow(self, Color(0.3, 0.95, 1.0), 26.0, 0.24, 1)
         glow.visible = false
@@ -69,6 +87,7 @@ func _process(delta: float) -> void:
     if player == null or player.is_dead:
         _hide_glows()
         return
+    overclock_time = maxf(0.0, overclock_time - delta)
     _update_turrets(delta)
     _update_orbiter(delta)
     _update_chain(delta)
@@ -116,8 +135,13 @@ func _update_turrets(delta: float) -> void:
     if turret_timer <= 0.0:
         turret_timer = _turret_deploy_interval(quality)
         if turrets.size() < _turret_cap(quality):
+            var anchor := _anchor_for("peony")
+            var deploy_target = _nearest_enemy(anchor, _turret_range(quality))
+            var deploy_pos := anchor + Vector2(0.0, 42.0)
+            if deploy_target != null:
+                deploy_pos = anchor + (deploy_target.global_position - anchor).normalized() * 34.0
             turrets.append({
-                "pos": player.global_position + Vector2(0.0, 46.0),
+                "pos": deploy_pos,
                 "life": _turret_lifetime(quality),
                 "fire": 0.12,
                 "aim": Vector2.UP,
@@ -162,10 +186,11 @@ func _update_orbiter(delta: float) -> void:
 
     orbiter_angle += _orbiter_speed(quality) * delta
     var blades := _orbiter_blade_count(quality)
+    var anchor := _anchor_for("maple")
     orbiter_positions.clear()
     for index in range(blades):
         var angle := orbiter_angle + TAU * float(index) / float(blades)
-        orbiter_positions.append(player.global_position + Vector2.from_angle(angle) * _orbiter_radius(quality))
+        orbiter_positions.append(anchor + Vector2.from_angle(angle) * _orbiter_radius(quality))
     orbiter_sfx_timer = maxf(0.0, orbiter_sfx_timer - delta)
 
     orbiter_tick -= delta
@@ -179,7 +204,7 @@ func _update_orbiter(delta: float) -> void:
                 ArtFX.flash_at(get_tree().current_scene, blade_position, blade_color, 18.0, 0.1)
             for enemy in hit_enemies:
                 _damage_enemy(enemy, _orbiter_damage(quality))
-                _apply_knockback(enemy, 14.0)
+                _apply_knockback(enemy, blade_position, 14.0)
                 hit_any = true
         if hit_any and orbiter_sfx_timer <= 0.0:
             Audio.play("orbiter", -28.0)
@@ -205,12 +230,13 @@ func _update_chain(delta: float) -> void:
     if chain_timer > 0.0:
         return
     chain_timer = _chain_cooldown(quality)
-    var first = _nearest_enemy(player.global_position, _chain_range(quality))
+    var anchor := _anchor_for("justice")
+    var first = _nearest_enemy(anchor, _chain_range(quality))
     if first == null:
         return
 
     var targets := _chain_targets(first, quality)
-    var points: Array = [player.global_position]
+    var points: Array = [anchor]
     var slow_factor := 0.55 if quality >= MAX_QUALITY else 0.7
     for enemy in targets:
         points.append(enemy.global_position)
@@ -241,7 +267,7 @@ func _update_pierce(delta: float) -> void:
         return
     pierce_timer = _pierce_cooldown(quality)
 
-    var start: Vector2 = player.global_position
+    var start: Vector2 = _anchor_for("vigil")
     var target = _nearest_enemy(start, _pierce_range(quality))
     var direction: Vector2 = player.facing
     if target != null:
@@ -249,10 +275,10 @@ func _update_pierce(delta: float) -> void:
     if direction.length_squared() < 0.01:
         direction = Vector2.RIGHT
     var end := start + direction * _pierce_range(quality)
-    var mark_bonus := 0.25 if quality >= MAX_QUALITY else 0.15
+    var mark_bonus := 0.30 if quality >= MAX_QUALITY else 0.20
     for enemy in _line_hits(start, end, _pierce_width(quality), _pierce_count(quality)):
         _damage_enemy(enemy, _pierce_damage(quality))
-        _apply_mark(enemy, 1.5, mark_bonus)
+        _apply_mark(enemy, 2.0, mark_bonus)
 
     var color := Color(0.55, 0.85, 1.0, 0.9)
     if quality >= MAX_QUALITY:
@@ -269,20 +295,25 @@ func _update_hammer(delta: float) -> void:
     if hammer_timer > 0.0:
         return
     hammer_timer = 2.2 * QUALITY_COOLDOWN[quality]
-    var radius := 160.0 if quality >= MAX_QUALITY else 85.0 + float(quality - 1) * 15.0
+    var anchor := _anchor_for("hammer")
+    var target = _nearest_enemy(anchor, _hammer_target_range(quality))
+    var impact: Vector2 = anchor + player.facing * 120.0
+    if target != null:
+        impact = target.global_position
+    var radius := _hammer_radius(quality)
     var damage := int(20.0 * QUALITY_DAMAGE[quality])
     if quality >= MAX_QUALITY:
         damage = int(float(damage) * 1.5)
-    for enemy in _enemies_in_radius(player.global_position, radius):
+    for enemy in _enemies_in_radius(impact, radius):
         _damage_enemy(enemy, damage)
-        _apply_knockback(enemy, 50.0)
+        _apply_knockback(enemy, impact, 35.0)
         _apply_stun(enemy, 0.4)
     hammer_effects.append({
-        "pos": player.global_position,
+        "pos": impact,
         "life": 0.30,
         "radius": radius,
     })
-    ArtFX.flash_at(get_tree().current_scene, player.global_position, Color(1.0, 0.75, 0.3), radius * 0.9, 0.22)
+    ArtFX.flash_at(get_tree().current_scene, impact, Color(1.0, 0.75, 0.3), radius * 0.9, 0.22)
     Fx.shake(4.0, 0.12)
     Audio.play("explode", -22.0)
 
@@ -294,11 +325,12 @@ func _update_elixir(delta: float) -> void:
     if elixir_timer > 0.0:
         return
     elixir_timer = 2.6 * QUALITY_COOLDOWN[quality]
-    var target = _nearest_enemy(player.global_position, 650.0)
-    var pos: Vector2 = player.global_position + player.facing * 120.0
+    var anchor := _anchor_for("elixir")
+    var target = _nearest_enemy(anchor, _elixir_target_range(quality))
+    var pos: Vector2 = anchor + player.facing * 120.0
     if target != null:
         pos = target.global_position
-    var radius := 115.0 if quality >= MAX_QUALITY else 65.0 + float(quality - 1) * 15.0
+    var radius := _elixir_radius(quality)
     var damage := int(5.0 * QUALITY_DAMAGE[quality])
     if quality >= MAX_QUALITY:
         damage = int(9.0 * QUALITY_DAMAGE[quality])
@@ -409,8 +441,12 @@ func _line_hits(start: Vector2, end: Vector2, width: float, limit: int) -> Array
 func _damage_enemy(enemy, base_damage: int) -> void:
     if enemy == null or not is_instance_valid(enemy):
         return
-    var is_crit := randf() < CRIT_CHANCE
-    var amount := int(round(float(base_damage) * wave_power * (CRIT_MULT if is_crit else 1.0)))
+    var crit_chance := CRIT_CHANCE + float(item_stats_cache.get("crit_bonus", 0.0))
+    var is_crit := randf() < crit_chance
+    var scale := character_damage_mult * float(item_stats_cache.get("weapon_damage_mult", 1.0))
+    if overclock_time > 0.0:
+        scale *= OVERCLOCK_MULT
+    var amount := int(round(float(base_damage) * wave_power * scale * (CRIT_MULT if is_crit else 1.0)))
     if enemy.has_method("take_damage"):
         enemy.take_damage(amount, is_crit)
 
@@ -426,12 +462,10 @@ func _apply_mark(enemy, duration: float, bonus: float) -> void:
     if enemy != null and is_instance_valid(enemy) and enemy.has_method("apply_mark"):
         enemy.apply_mark(duration, bonus)
 
-func _apply_knockback(enemy, distance: float) -> void:
+func _apply_knockback(enemy, origin: Vector2, distance: float) -> void:
     if enemy == null or not is_instance_valid(enemy) or not enemy.has_method("apply_knockback"):
         return
-    if player == null or not is_instance_valid(player):
-        return
-    enemy.apply_knockback(enemy.global_position - player.global_position, distance)
+    enemy.apply_knockback(enemy.global_position - origin, distance)
 
 func _power_for(wave_no: int, chapter_no: int) -> float:
     return 1.0 + 0.05 * float(wave_no - 1) + 0.12 * float(chapter_no - 1)
@@ -454,7 +488,28 @@ func _orbiter_blade_count(quality: int) -> int:
 func _turret_cap(quality: int) -> int:
     return 2 if quality >= 3 else 1
 
+func _draw_emplacements() -> void:
+    var font := UI.regular_font()
+    for index in range(EMPLACEMENTS.size()):
+        var pos := to_local(EMPLACEMENTS[index])
+        var owner := str(slot_owners.get(index, ""))
+        var owned := owner != ""
+        var frame := Color(0.85, 0.71, 0.42, 0.72 if owned else 0.22)
+        draw_circle(pos, 22.0, Color(0.03, 0.06, 0.07, 0.5))
+        draw_arc(pos, 22.0, 0.0, TAU, 32, frame, 2.0, true)
+        draw_arc(pos, 15.0, 0.0, TAU, 24, Color(frame.r, frame.g, frame.b, 0.32), 1.0, true)
+        if not owned:
+            draw_string(font, pos + Vector2(-20.0, 5.0), "空", HORIZONTAL_ALIGNMENT_CENTER, 40.0, 10, Color(0.8, 0.9, 0.9, 0.16))
+            continue
+        var quality := _q(owner)
+        var quality_color := get_quality_color(quality)
+        var range_radius := _weapon_range(owner, quality)
+        draw_arc(pos, range_radius, 0.0, TAU, 64, Color(quality_color.r, quality_color.g, quality_color.b, 0.07), 1.0, true)
+        draw_circle(pos, 4.0, quality_color)
+        draw_string(font, pos + Vector2(-20.0, 6.0), _weapon_glyph(owner), HORIZONTAL_ALIGNMENT_CENTER, 40.0, 15, quality_color.lightened(0.2))
+
 func _draw() -> void:
+    _draw_emplacements()
     for beam in beams:
         var points: Array = beam["points"]
         for index in range(points.size() - 1):
@@ -484,7 +539,7 @@ func _draw() -> void:
     if _q("maple") > 0 and not orbiter_positions.is_empty():
         var orbiter_color := Color("#f97316") if _legendary("maple") else Color("#22d3ee")
         if _legendary("maple"):
-            draw_arc(to_local(player.global_position), _orbiter_radius(MAX_QUALITY), 0.0, TAU, 64, Color(0.3, 0.9, 1.0, 0.25), 2.0, true)
+            draw_arc(to_local(_anchor_for("maple")), _orbiter_radius(MAX_QUALITY), 0.0, TAU, 64, Color(0.3, 0.9, 1.0, 0.25), 2.0, true)
         for blade_position in orbiter_positions:
             var orbiter_pos := to_local(blade_position)
             draw_circle(orbiter_pos, 12.0, Color(0.03, 0.12, 0.16, 0.9))
@@ -520,7 +575,7 @@ func _legendary(weapon_type: String) -> bool:
 
 func _turret_damage(quality: int) -> int:
     var damage := int(10.0 * QUALITY_DAMAGE[quality])
-    return int(30.0 * QUALITY_DAMAGE[quality]) if quality >= MAX_QUALITY else damage
+    return int(15.0 * QUALITY_DAMAGE[quality]) if quality >= MAX_QUALITY else damage
 
 func _turret_deploy_interval(quality: int) -> float:
     return 5.0 * QUALITY_COOLDOWN[quality]
@@ -535,7 +590,7 @@ func _turret_range(quality: int) -> float:
     return 620.0 if quality >= MAX_QUALITY else 420.0 + float(quality) * 30.0
 
 func _orbiter_radius(quality: int) -> float:
-    return 80.0 if quality >= MAX_QUALITY else 65.0 + float(quality - 1) * 12.0
+    return 150.0 + float(quality - 1) * 15.0
 
 func _orbiter_speed(_quality: int) -> float:
     return 3.2
@@ -565,7 +620,7 @@ func _chain_range(quality: int) -> float:
     return 420.0 + float(quality) * 40.0
 
 func _pierce_damage(quality: int) -> int:
-    return int((60.0 if quality >= MAX_QUALITY else 18.0) * QUALITY_DAMAGE[quality])
+    return int((30.0 if quality >= MAX_QUALITY else 18.0) * QUALITY_DAMAGE[quality])
 
 func _pierce_count(quality: int) -> int:
     return 99 if quality >= MAX_QUALITY else 2 + quality
@@ -579,17 +634,129 @@ func _pierce_range(quality: int) -> float:
 func _pierce_width(quality: int) -> float:
     return 16.0 if quality >= MAX_QUALITY else 18.0
 
+func _hammer_target_range(quality: int) -> float:
+    return 260.0 + float(quality - 1) * 25.0
+
+func _hammer_radius(quality: int) -> float:
+    return 160.0 if quality >= MAX_QUALITY else 85.0 + float(quality - 1) * 15.0
+
+func _elixir_target_range(quality: int) -> float:
+    return 480.0 + float(quality - 1) * 20.0
+
+func _elixir_radius(quality: int) -> float:
+    return 115.0 if quality >= MAX_QUALITY else 65.0 + float(quality - 1) * 15.0
+
+func _weapon_range(weapon_type: String, quality: int) -> float:
+    match weapon_type:
+        "peony":
+            return _turret_range(quality)
+        "maple":
+            return _orbiter_radius(quality) + _orbiter_hit_radius(quality)
+        "justice":
+            return _chain_range(quality)
+        "vigil":
+            return _pierce_range(quality)
+        "hammer":
+            return _hammer_target_range(quality) + _hammer_radius(quality)
+        "elixir":
+            return _elixir_target_range(quality) + _elixir_radius(quality)
+        _:
+            return 0.0
+
+func _weapon_glyph(weapon_type: String) -> String:
+    match weapon_type:
+        "peony":
+            return "炮"
+        "maple":
+            return "刃"
+        "justice":
+            return "链"
+        "vigil":
+            return "穿"
+        "hammer":
+            return "锤"
+        "elixir":
+            return "毒"
+        _:
+            return ""
+
+func _first_empty_slot() -> int:
+    for index in range(EMPLACEMENTS.size()):
+        if not slot_owners.has(index):
+            return index
+    return -1
+
+func _anchor_for(weapon_type: String) -> Vector2:
+    var slot := int(weapon_slots.get(weapon_type, -1))
+    if slot >= 0 and slot < EMPLACEMENTS.size():
+        return EMPLACEMENTS[slot]
+    if player != null and is_instance_valid(player):
+        return player.global_position
+    return Vector2.ZERO
+
+func get_emplacement_count() -> int:
+    return EMPLACEMENTS.size()
+
+func get_emplacement_position(index: int) -> Vector2:
+    if index < 0 or index >= EMPLACEMENTS.size():
+        return Vector2.ZERO
+    return EMPLACEMENTS[index]
+
+func get_weapon_slot(weapon_type: String) -> int:
+    return int(weapon_slots.get(weapon_type, -1))
+
+func get_slot_name(weapon_type: String) -> String:
+    var slot := get_weapon_slot(weapon_type)
+    if slot < 0 or slot >= EMPLACEMENT_NAMES.size():
+        return ""
+    return str(EMPLACEMENT_NAMES[slot])
+
+func get_next_emplacement_name() -> String:
+    var slot := _first_empty_slot()
+    if slot < 0:
+        return "无空位"
+    return str(EMPLACEMENT_NAMES[slot])
+
+func set_character_damage_mult(value: float) -> void:
+    character_damage_mult = maxf(0.0, value)
+
+func get_weapon_damage_scale() -> float:
+    return character_damage_mult
+
+func set_overclock(duration: float) -> void:
+    overclock_time = maxf(overclock_time, duration)
+    for index in slot_owners.keys():
+        ArtFX.flash_at(get_tree().current_scene, EMPLACEMENTS[int(index)], Color(1.0, 0.78, 0.3), 46.0, 0.24)
+
 func reset_build() -> void:
     weapon_qualities.clear()
     weapon_order.clear()
+    weapon_slots.clear()
+    slot_owners.clear()
     item_qualities.clear()
     item_order.clear()
+    overclock_time = 0.0
+    turret_timer = 0.0
+    orbiter_angle = 0.0
+    orbiter_tick = 0.0
+    trail_timer = 0.0
+    chain_timer = 0.0
+    chain_life = 0.0
+    pierce_timer = 0.0
+    hammer_timer = 0.0
+    elixir_timer = 0.0
+    _clear_transient_effects()
+    item_stats_cache = get_item_stats()
+
+func _clear_transient_effects() -> void:
     turrets.clear()
     fire_patches.clear()
     poison_fields.clear()
+    hammer_effects.clear()
     beams.clear()
     chain_points.clear()
     orbiter_positions.clear()
+    chain_life = 0.0
 
 func get_weapon_types() -> Array:
     return WEAPON_ORDER.duplicate()
@@ -650,7 +817,7 @@ func can_buy_weapon(weapon_type: String, quality: int) -> bool:
     if not WEAPON_DATA.has(weapon_type) or quality < 1 or quality > MAX_QUALITY:
         return false
     if not weapon_qualities.has(weapon_type):
-        return weapon_order.size() < MAX_WEAPON_SLOTS
+        return weapon_order.size() < MAX_WEAPON_SLOTS and _first_empty_slot() >= 0
     var current := _q(weapon_type)
     return current < MAX_QUALITY and quality >= current
 
@@ -658,9 +825,14 @@ func buy_weapon(weapon_type: String, quality: int) -> Dictionary:
     if not can_buy_weapon(weapon_type, quality):
         return {"ok": false, "reason": "cannot buy"}
     if not weapon_qualities.has(weapon_type):
+        var slot := _first_empty_slot()
+        if slot < 0:
+            return {"ok": false, "reason": "no emplacement"}
         weapon_qualities[weapon_type] = quality
         weapon_order.append(weapon_type)
-        return {"ok": true, "new": true, "quality": quality}
+        weapon_slots[weapon_type] = slot
+        slot_owners[slot] = weapon_type
+        return {"ok": true, "new": true, "quality": quality, "slot": slot, "slot_name": str(EMPLACEMENT_NAMES[slot])}
     var current := _q(weapon_type)
     var next_quality := current
     if quality == current:
@@ -673,8 +845,13 @@ func buy_weapon(weapon_type: String, quality: int) -> Dictionary:
 func sell_weapon(weapon_type: String) -> bool:
     if not weapon_qualities.has(weapon_type):
         return false
+    var slot := get_weapon_slot(weapon_type)
     weapon_qualities.erase(weapon_type)
     weapon_order.erase(weapon_type)
+    weapon_slots.erase(weapon_type)
+    if slot >= 0:
+        slot_owners.erase(slot)
+    _clear_transient_effects()
     return true
 
 func can_buy_item(item_id: String, quality: int) -> bool:
@@ -691,6 +868,7 @@ func buy_item(item_id: String, quality: int) -> Dictionary:
     if not item_qualities.has(item_id):
         item_qualities[item_id] = quality
         item_order.append(item_id)
+        _refresh_item_cache()
         return {"ok": true, "new": true, "quality": quality}
     var current := int(item_qualities[item_id])
     var next_quality := current
@@ -699,6 +877,7 @@ func buy_item(item_id: String, quality: int) -> Dictionary:
     elif quality > current:
         next_quality = quality
     item_qualities[item_id] = mini(MAX_QUALITY, next_quality)
+    _refresh_item_cache()
     return {"ok": true, "new": false, "quality": int(item_qualities[item_id])}
 
 func sell_item(item_id: String) -> bool:
@@ -706,7 +885,11 @@ func sell_item(item_id: String) -> bool:
         return false
     item_qualities.erase(item_id)
     item_order.erase(item_id)
+    _refresh_item_cache()
     return true
+
+func _refresh_item_cache() -> void:
+    item_stats_cache = get_item_stats()
 
 func get_item_stats() -> Dictionary:
     var stats := {
@@ -716,6 +899,8 @@ func get_item_stats() -> Dictionary:
         "gold_mult": 1.0,
         "sell_mult": 1.0,
         "free_rerolls": 0,
+        "weapon_damage_mult": 1.0,
+        "crit_bonus": 0.0,
     }
     for item_id in item_order:
         var quality := int(item_qualities.get(item_id, 0))
@@ -723,18 +908,20 @@ func get_item_stats() -> Dictionary:
             continue
         match item_id:
             "magnet":
-                stats["pickup_radius"] += 35.0 * float(quality)
+                stats["pickup_radius"] += 30.0 * float(quality)
             "boots":
-                stats["move_speed_bonus"] += 25.0 * float(quality)
+                stats["move_speed_bonus"] += 22.0 * float(quality)
             "holy_fire":
-                stats["max_health_bonus"] += 15 * quality
+                stats["max_health_bonus"] += 20 * quality
             "lucky_cat":
-                stats["sell_mult"] += 0.10 * float(quality)
-                stats["gold_mult"] += 0.03 * float(quality)
+                stats["sell_mult"] += 0.08 * float(quality)
+                stats["gold_mult"] += 0.04 * float(quality)
             "anvil":
                 stats["free_rerolls"] += quality
+                stats["weapon_damage_mult"] += 0.06 * float(quality)
             "jade":
                 stats["gold_mult"] += 0.10 * float(quality)
+                stats["crit_bonus"] += 0.04 * float(quality)
     return stats
 
 func get_weapon_slots() -> Array:
@@ -745,6 +932,8 @@ func get_weapon_slots() -> Array:
             "title": get_weapon_title(weapon_type),
             "quality": _q(weapon_type),
             "legendary": _legendary(weapon_type),
+            "slot": get_weapon_slot(weapon_type),
+            "slot_name": get_slot_name(weapon_type),
         })
     while slots.size() < MAX_WEAPON_SLOTS:
         slots.append({})

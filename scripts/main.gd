@@ -18,7 +18,9 @@ const STAGE_NAMES := [
     ["赤沙门", "流沙阱", "风暴眼", "沙王座"],
     ["禁地门", "铜人阵", "天工台", "百炼殿"],
 ]
-const CHAPTER_MULT := [1.0, 1.18, 1.38]
+const CHAPTER_MULT := [1.0, 1.22, 1.48]
+const STAGE_MULT := 0.05
+const HERO_ATTRIBUTE_WEAPON_DAMAGE := 1.15
 const WAVES_PER_STAGE := 16
 const BOSS_WAVES := [8, 16]
 const START_GOLD := 15
@@ -26,6 +28,7 @@ const CHAPTER_START_GOLD := 5
 const REROLL_COST := 2
 const SHOP_OFFER_COUNT := 4
 const STARTER_WEAPON := "maple"
+const SECOND_STARTERS := ["peony", "justice", "elixir"]
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
 
@@ -103,7 +106,7 @@ func _ready() -> void:
     hud.next_stage.connect(_on_next_stage)
     hud.retry_stage.connect(_on_retry_stage)
     hud.stage_select.connect(_on_stage_select)
-    hud.dash_requested.connect(player.try_dash)
+    hud.skill_requested.connect(player.try_cast_skill)
     player.health_changed.connect(hud.set_health)
     Fx.shake_requested.connect(_on_shake_requested)
 
@@ -139,7 +142,7 @@ func _process(delta: float) -> void:
         _on_player_died()
         return
 
-    hud.set_dash_state(player.can_dash(), player.get_dash_cooldown_remaining())
+    hud.set_skill_state(player.can_cast_skill(), player.get_skill_cooldown_remaining(), player.get_skill_cooldown_total())
 
     if boss_wave:
         boss_spawn_timer -= delta
@@ -203,14 +206,15 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     player.visible = true
     player.set_physics_process(true)
     player.global_position = Vector2(640.0, 360.0)
-    player.is_dead = false
-    player.max_health = 100
-    player.health = 100
-    player.move_speed = 340.0
-    player.health_changed.emit(player.health, player.max_health)
+    player.reset_for_run()
     weapon_manager.visible = true
     weapon_manager.reset_build()
+    weapon_manager.set_character_damage_mult(HERO_ATTRIBUTE_WEAPON_DAMAGE)
     weapon_manager.buy_weapon(STARTER_WEAPON, mini(4, chapter))
+    var second_starter := _pick_second_starter()
+    if second_starter != "":
+        weapon_manager.buy_weapon(second_starter, 1)
+    player.set_wave_info(1, chapter)
     _apply_item_stats()
     hud.hide_stage_select()
     hud.hide_shop()
@@ -222,6 +226,9 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
     hud.set_item_slots(weapon_manager.get_item_slots())
     _start_wave(1)
+
+func _pick_second_starter() -> String:
+    return str(SECOND_STARTERS[randi() % SECOND_STARTERS.size()])
 
 func _stage_label() -> String:
     if is_endless:
@@ -246,14 +253,57 @@ func _stage_index(id: String) -> int:
 
 func _difficulty_mult() -> float:
     if is_endless:
-        return 1.0 + float(wave) * 0.04
-    return CHAPTER_MULT[chapter - 1] + float(stage_number - 1) * 0.065
+        return 1.0
+    return _stage_hp_mult_for(chapter, stage_number)
 
 func _wave_mult() -> float:
-    var value := 1.0 + float(wave - 1) * 0.05
-    if wave >= 12:
-        value *= 1.15
+    return _wave_hp_mult_for(wave, is_endless)
+
+func _stage_hp_mult_for(chapter_no: int, stage_no: int) -> float:
+    return CHAPTER_MULT[chapter_no - 1] + float(stage_no - 1) * STAGE_MULT
+
+func _wave_hp_mult_for(wave_no: int, endless: bool) -> float:
+    if endless:
+        return pow(1.055, float(wave_no - 1))
+    var value := pow(1.045, float(wave_no - 1))
+    if wave_no >= 12:
+        value *= 1.10
     return value
+
+func _base_enemy_hp(kind: String, wave_no: int) -> float:
+    match kind:
+        "shooter":
+            return 18.0 + 4.0 * float(wave_no)
+        "exploder":
+            return 28.0 + 5.0 * float(wave_no)
+        _:
+            return 24.0 + 4.5 * float(wave_no)
+
+func _enemy_hp_for(kind: String, wave_no: int, chapter_no: int, stage_no: int, endless: bool) -> int:
+    var chapter_mult := 1.0 if endless else _stage_hp_mult_for(chapter_no, stage_no)
+    return int(_base_enemy_hp(kind, wave_no) * chapter_mult * _wave_hp_mult_for(wave_no, endless))
+
+func _contact_damage_for(wave_no: int, chapter_no: int) -> int:
+    return 6 + int(wave_no / 5.0) + int(float(chapter_no - 1) * 1.5)
+
+func _shooter_damage_for(wave_no: int, chapter_no: int) -> int:
+    return 5 + int(wave_no / 5.0) + int(float(chapter_no - 1) * 1.5)
+
+func _exploder_damage_for(wave_no: int, chapter_no: int) -> int:
+    return 18 + wave_no + (chapter_no - 1) * 3
+
+func _boss_contact_for(chapter_no: int) -> int:
+    return 20 + (chapter_no - 1) * 2
+
+func _chapter_gold_mult() -> float:
+    if is_endless:
+        return 1.0
+    return _chapter_gold_mult_for(chapter)
+
+func _chapter_gold_mult_for(chapter_no: int) -> float:
+    if chapter_no <= 0:
+        return 1.0
+    return [1.0, 1.15, 1.3][mini(chapter_no, 3) - 1]
 
 func _quality_progress_for(stage_idx: int, endless: bool, wave_no: int) -> float:
     if endless:
@@ -307,11 +357,12 @@ func _is_elite_wave(wave_no: int) -> bool:
     return wave_no == 6 or wave_no == 14
 
 func _wave_heal_ratio(is_boss: bool) -> float:
-    return 0.25 if is_boss else 0.10
+    return 0.35 if is_boss else 0.15
 
 func _start_wave(number: int) -> void:
     wave = number
     weapon_manager.set_wave_power(number, chapter)
+    player.set_wave_info(number, chapter)
     wave_active = true
     if is_endless and wave > best_endless_wave:
         best_endless_wave = wave
@@ -381,20 +432,19 @@ func _spawn_enemy() -> void:
 
     var pos := _edge_spawn_position()
 
-    var mult := _difficulty_mult() * _wave_mult()
     var enemy = scene.instantiate()
     if enemy_type == "shooter":
-        enemy.max_health = int((18.0 + float(wave) * 5.0) * mult)
+        enemy.max_health = _enemy_hp_for("shooter", wave, chapter, stage_number, is_endless)
         enemy.contact_damage = 5
         enemy.move_speed = randf_range(85.0, 110.0)
-        enemy.projectile_damage = 5 + int(wave / 4) + (chapter - 1) * 2
+        enemy.projectile_damage = _shooter_damage_for(wave, chapter)
     elif enemy_type == "exploder":
-        enemy.max_health = int((28.0 + float(wave) * 7.0) * mult)
+        enemy.max_health = _enemy_hp_for("exploder", wave, chapter, stage_number, is_endless)
         enemy.move_speed = randf_range(65.0, 90.0)
-        enemy.explosion_damage = int(20.0 + float(wave) * 1.5 + float(chapter - 1) * 5.0)
+        enemy.explosion_damage = _exploder_damage_for(wave, chapter)
     else:
-        enemy.max_health = int((24.0 + float(wave) * 6.0) * mult)
-        enemy.contact_damage = 6 + int(wave / 4) + (chapter - 1) * 2
+        enemy.max_health = _enemy_hp_for("chaser", wave, chapter, stage_number, is_endless)
+        enemy.contact_damage = _contact_damage_for(wave, chapter)
         enemy.move_speed = randf_range(85.0, 125.0) + float(chapter) * 6.0
 
     enemies.add_child(enemy)
@@ -421,11 +471,10 @@ func _spawn_treasure() -> void:
 
 func _spawn_elite() -> void:
     var enemy = ENEMY_SCENE.instantiate()
-    var mult := _difficulty_mult() * _wave_mult()
-    enemy.max_health = int((24.0 + float(wave) * 6.0) * mult * 2.4)
+    enemy.max_health = int(float(_enemy_hp_for("chaser", wave, chapter, stage_number, is_endless)) * 7.0)
     enemy.move_speed = 72.0
-    enemy.contact_damage = int(float(6 + int(wave / 4) + (chapter - 1) * 2) * 1.3)
-    enemy.coin_drop = 4
+    enemy.contact_damage = int(float(_contact_damage_for(wave, chapter)) * 1.3)
+    enemy.coin_drop = 6
     enemy.elite = true
     enemy.scale = Vector2(1.7, 1.7)
     enemy.modulate = Color(1.0, 0.84, 0.55)
@@ -440,10 +489,10 @@ func _spawn_elite() -> void:
 
 func _spawn_boss() -> void:
     var boss = BOSS_SCENE.instantiate()
-    var mult := _difficulty_mult() * (1.4 if wave >= 16 else 1.0)
-    boss.max_health = int(1000.0 * mult)
+    var base_hp := _enemy_hp_for("chaser", wave, chapter, stage_number, is_endless)
+    boss.max_health = int(float(base_hp) * 18.0 * (1.3 if wave >= 16 else 1.0))
     boss.move_speed = 55.0
-    boss.contact_damage = 22 + (chapter - 1) * 3
+    boss.contact_damage = _boss_contact_for(chapter)
     enemies.add_child(boss)
     boss.global_position = Vector2(get_viewport_rect().size.x * 0.5, -90.0)
     boss.health_changed.connect(hud.set_boss_health)
@@ -481,7 +530,7 @@ func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave 
         coin.collected.connect(_on_coin_collected)
 
 func _on_coin_collected(value: int) -> void:
-    gold += int(float(value) * gold_mult)
+    gold += int(float(value) * gold_mult * _chapter_gold_mult())
     hud.set_gold(gold)
 
 func _finish_wave() -> void:
@@ -495,7 +544,7 @@ func _finish_wave() -> void:
     _open_shop()
 
 func _heal_after_wave() -> void:
-    var amount := int(ceil(float(player.max_health) * _wave_heal_ratio(boss_wave)))
+    var amount := int(ceil(float(player.max_health) * _wave_heal_ratio(boss_wave))) + 5
     if amount <= 0:
         return
     var before: int = int(player.health)
@@ -637,6 +686,8 @@ func _shop_data() -> Dictionary:
             title = weapon_manager.get_item_title(offer["id"])
             desc = weapon_manager.get_item_desc(offer["id"])
             owned = weapon_manager.get_item_quality(offer["id"])
+        if offer["kind"] == "weapon" and owned == 0:
+            desc += " · 部署：" + weapon_manager.get_next_emplacement_name()
         if offer["bought"]:
             reason = "已售"
         elif can_buy and gold < int(offer["price"]):
@@ -710,7 +761,13 @@ func _on_buy_offer(index: int) -> void:
     var final_quality := int(result.get("quality", offer["quality"]))
     var quality_name: String = weapon_manager.get_quality_name(final_quality)
     var title: String = weapon_manager.get_weapon_title(offer["id"]) if offer["kind"] == "weapon" else weapon_manager.get_item_title(offer["id"])
-    shop_message = ("获得 " if bool(result.get("new", false)) else "升品为 ") + quality_name + " " + title
+    if bool(result.get("new", false)):
+        if offer["kind"] == "weapon":
+            shop_message = "获得 %s %s · 部署至%s" % [quality_name, title, str(result.get("slot_name", ""))]
+        else:
+            shop_message = "获得 %s %s" % [quality_name, title]
+    else:
+        shop_message = "升品为 %s %s" % [quality_name, title]
     _apply_item_stats()
     hud.set_gold(gold)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
@@ -787,8 +844,8 @@ func _apply_item_stats() -> void:
     pickup_radius = float(stats["pickup_radius"])
     gold_mult = float(stats["gold_mult"])
     sell_mult = float(stats["sell_mult"])
-    player.move_speed = 340.0 + float(stats["move_speed_bonus"])
-    var new_max := 100 + int(stats["max_health_bonus"])
+    player.move_speed = 360.0 + float(stats["move_speed_bonus"])
+    var new_max := 120 + int(stats["max_health_bonus"])
     if new_max != player.max_health:
         var gained: int = new_max - int(player.max_health)
         player.max_health = new_max
@@ -931,7 +988,7 @@ func _save_progress() -> void:
 func _collect_all_coins() -> void:
     for coin in get_tree().get_nodes_in_group("coin"):
         if is_instance_valid(coin):
-            gold += int(float(coin.value) * gold_mult)
+            gold += int(float(coin.value) * gold_mult * _chapter_gold_mult())
             coin.queue_free()
     hud.set_gold(gold)
 
@@ -1108,18 +1165,28 @@ func _run_smoke_test() -> void:
     if hud.get_wave_remaining_text() != "剩余 11 / 11":
         _fail_test("wave remaining HUD wrong")
         return
-    if absf(player.move_speed - 340.0) > 0.01:
+    if absf(player.move_speed - 360.0) > 0.01:
         _fail_test("base move speed not tuned")
         return
-    if absf(player.attack_interval - 0.40) > 0.001:
-        _fail_test("base attack interval not tuned")
+    if player.has_method("try_dash") or player.has_method("_try_auto_attack"):
+        _fail_test("legacy dash or auto attack still present")
         return
-    var projectile_probe = player.projectile_scene.instantiate()
-    if absf(projectile_probe.speed - 820.0) > 0.01:
-        _fail_test("base projectile speed not tuned")
-        projectile_probe.free()
+    if not player.has_method("try_cast_skill"):
+        _fail_test("hero skill missing")
         return
-    projectile_probe.free()
+    if weapon_manager.get_emplacement_count() != 6:
+        _fail_test("emplacement count wrong")
+        return
+    if weapon_manager.get_weapon_slot(STARTER_WEAPON) < 0:
+        _fail_test("starter weapon has no emplacement")
+        return
+    var starter_count := 0
+    for slot in weapon_manager.get_weapon_slots():
+        if not slot.is_empty():
+            starter_count += 1
+    if starter_count < 2:
+        _fail_test("second starter weapon missing")
+        return
 
     var joystick = get_tree().get_first_node_in_group("virtual_joystick")
     if joystick == null:
@@ -1177,18 +1244,17 @@ func _run_smoke_test() -> void:
             _fail_test("keyboard did not move player")
             return
 
-    var dash_button: Button = hud.get_node("Root/DashButton")
-    var dash_start: Vector2 = player.global_position
-    await _click_button(dash_button)
+    var skill_button: Button = hud.get_node("Root/SkillButton")
+    await _click_button(skill_button)
     await get_tree().create_timer(0.2).timeout
-    if player.get_dash_cooldown_remaining() <= 0.0:
-        _fail_test("dash cooldown did not start")
+    if player.get_skill_cooldown_remaining() <= 0.0:
+        _fail_test("skill cooldown did not start")
         return
-    if not dash_button.disabled:
-        _fail_test("dash button did not enter cooldown")
+    if not skill_button.disabled:
+        _fail_test("skill button did not enter cooldown")
         return
-    if player.global_position.distance_to(dash_start) <= 20.0:
-        _fail_test("dash did not move player")
+    if weapon_manager.overclock_time <= 0.0:
+        _fail_test("skill overclock missing")
         return
 
     spawn_timer = 1.0e9
@@ -1380,11 +1446,11 @@ func _run_smoke_test() -> void:
     if item_type == "magnet" and pickup_radius <= float(item_before["pickup_radius"]):
         _fail_test("magnet effect did not apply")
         return
-    if item_type == "boots" and player.move_speed <= 340.0:
+    if item_type == "boots" and player.move_speed <= 360.0:
         _fail_test("boots effect did not apply")
         return
     if item_type == "holy_fire":
-        if player.max_health <= 100:
+        if player.max_health <= 120:
             _fail_test("holy fire effect did not apply")
             return
         if player.health != player.max_health:
@@ -1575,10 +1641,26 @@ func _check_balance_rules() -> String:
         return "late spawn interval wrong"
     if not _is_elite_wave(6) or _is_elite_wave(7) or not _is_elite_wave(14):
         return "elite schedule wrong"
-    if not is_equal_approx(_wave_heal_ratio(false), 0.10):
+    if not is_equal_approx(_wave_heal_ratio(false), 0.15):
         return "normal wave heal wrong"
-    if not is_equal_approx(_wave_heal_ratio(true), 0.25):
+    if not is_equal_approx(_wave_heal_ratio(true), 0.35):
         return "boss wave heal wrong"
+    if not is_equal_approx(_stage_hp_mult_for(1, 1), 1.0):
+        return "stage 1-1 mult wrong"
+    if not is_equal_approx(_stage_hp_mult_for(3, 4), 1.63):
+        return "stage 3-4 mult wrong"
+    if absf(_wave_hp_mult_for(16, false) - 2.129) > 0.01:
+        return "wave 16 hp mult wrong"
+    if _enemy_hp_for("chaser", 16, 1, 1, false) != 204:
+        return "chapter 1 wave 16 hp wrong"
+    if _enemy_hp_for("chaser", 16, 3, 4, false) != 333:
+        return "chapter 3 wave 16 hp wrong"
+    if _contact_damage_for(16, 3) != 12 or _shooter_damage_for(16, 3) != 11:
+        return "normal enemy damage wrong"
+    if _exploder_damage_for(16, 3) != 40 or _boss_contact_for(3) != 24:
+        return "special enemy damage wrong"
+    if not is_equal_approx(_chapter_gold_mult_for(1), 1.0) or not is_equal_approx(_chapter_gold_mult_for(3), 1.3):
+        return "chapter gold mult wrong"
     return ""
 
 func _check_wave_rules() -> String:
@@ -1617,6 +1699,20 @@ func _check_weapon_rules() -> String:
         return "turret cap helper missing"
     if weapon_manager._turret_cap(1) != 1 or weapon_manager._turret_cap(3) != 2:
         return "turret cap scaling wrong"
+    if weapon_manager.get_emplacement_count() != 6:
+        return "emplacement count wrong"
+    if weapon_manager.get_emplacement_position(0) != Vector2(640.0, 185.0):
+        return "emplacement layout wrong"
+    if not is_equal_approx(weapon_manager._orbiter_radius(1), 150.0) or not is_equal_approx(weapon_manager._orbiter_radius(4), 195.0):
+        return "orbiter emplacement radius wrong"
+    if not is_equal_approx(weapon_manager._hammer_target_range(1), 260.0):
+        return "hammer target range wrong"
+    if not is_equal_approx(weapon_manager._elixir_target_range(1), 480.0):
+        return "elixir target range wrong"
+    if weapon_manager._turret_damage(4) != 36 or weapon_manager._pierce_damage(4) != 72:
+        return "legendary weapon damage wrong"
+    if not is_equal_approx(weapon_manager.get_weapon_damage_scale(), 1.15):
+        return "hero attribute damage scale wrong"
     return ""
 
 func _test_finish_wave() -> void:
