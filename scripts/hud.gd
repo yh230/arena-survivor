@@ -36,6 +36,8 @@ var stage_label: Label
 var wave_label: Label
 var gold_label: Label
 var timer_label: Label
+var level_label: Label
+var xp_bar: ProgressBar
 var sub_label: Label
 var tip_label: Label
 var boss_bar: Panel
@@ -109,6 +111,10 @@ var _stage_current_tween: Tween
 var _current_stage_id := ""
 var _last_track_wave := -1
 var _skill_was_ready := true
+var _hero_level := 1
+var _hero_xp := 0
+var _hero_xp_to_next := 1
+var _hero_damage_pct := 15
 var _animate_offers := false
 var _offer_entrance_tween: Tween
 var _last_offer_bought: Array = []
@@ -323,6 +329,12 @@ func _build_stats_panel() -> void:
     hp_row.add_child(UI.label("生命", 13, UI.MUTED))
     health_label = UI.label("120 / 120", 27, UI.TEXT, true)
     hp_row.add_child(health_label)
+    var hp_spacer := Control.new()
+    hp_spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    hp_spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hp_row.add_child(hp_spacer)
+    level_label = UI.label("Lv.1", 12, UI.BRASS_LIGHT, true)
+    hp_row.add_child(level_label)
     hp_column.add_child(hp_row)
 
     hp_bar = ProgressBar.new()
@@ -346,6 +358,17 @@ func _build_stats_panel() -> void:
     hp_ticks.set("segments", 10)
     hp_bar.add_child(hp_ticks)
     hp_column.add_child(hp_bar)
+
+    xp_bar = ProgressBar.new()
+    xp_bar.custom_minimum_size = Vector2(0.0, 4.0)
+    xp_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+    xp_bar.max_value = 6.0
+    xp_bar.value = 0.0
+    xp_bar.show_percentage = false
+    xp_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    xp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.02, 0.05, 0.06, 1.0), Color(0.13, 0.25, 0.26, 0.8), 2, 0))
+    xp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.BRASS_LIGHT, UI.BRASS_LIGHT, 2, 0))
+    hp_column.add_child(xp_bar)
 
     var stage_row := HBoxContainer.new()
     stage_row.add_theme_constant_override("separation", 8)
@@ -383,7 +406,7 @@ func _build_stats_panel() -> void:
     gold_row.add_child(timer_label)
     box.add_child(gold_row)
 
-    sub_label = UI.label("敌人 0 · 无尽最佳 0", 11, UI.MUTED)
+    sub_label = UI.label("机关 +15% · 敌 0 · 无尽 0", 11, UI.MUTED)
     box.add_child(sub_label)
     UI.add_corners(stats_panel)
 
@@ -776,7 +799,23 @@ func set_best_wave(value: int) -> void:
     _update_sub_label()
 
 func _update_sub_label() -> void:
-    sub_label.text = "机关师 · 机关伤害 +15%% · 敌 %d · 无尽 %d" % [_enemy_count, _best_wave]
+    sub_label.text = "机关 +%d%% · 敌 %d · 无尽 %d" % [_hero_damage_pct, _enemy_count, _best_wave]
+
+func set_hero_progress(level: int, xp: int, needed: int, damage_pct: int) -> void:
+    var leveled := level > _hero_level
+    _hero_level = level
+    _hero_xp = xp
+    _hero_xp_to_next = maxi(1, needed)
+    _hero_damage_pct = damage_pct
+    level_label.text = "Lv.%d" % level
+    xp_bar.max_value = float(_hero_xp_to_next)
+    xp_bar.value = clampi(xp, 0, _hero_xp_to_next)
+    if leveled:
+        _pulse_control(level_label, 1.22, 0.24)
+    _update_sub_label()
+
+func get_hero_level_text() -> String:
+    return level_label.text
 
 func set_skill_state(ready: bool, remaining: float, total: float) -> void:
     var ready_changed := ready != _skill_was_ready
@@ -1343,7 +1382,7 @@ func _build_shop() -> void:
     shop_gold_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     content.add_child(shop_gold_label)
 
-    shop_health_label = UI.label("生命 120 / 120", 11, UI.MUTED)
+    shop_health_label = UI.label("生命 120 / 120 · Lv.1", 11, UI.MUTED)
     shop_health_label.position = Vector2(964.0, 60.0)
     shop_health_label.size = Vector2(220.0, 16.0)
     shop_health_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -1590,7 +1629,7 @@ func refresh_shop(data: Dictionary) -> void:
     var health := int(data.get("health", 100))
     var max_health := maxi(1, int(data.get("max_health", 100)))
     var low_health := float(health) / float(max_health) <= 0.3
-    shop_health_label.text = "生命 %d / %d" % [health, max_health]
+    shop_health_label.text = "生命 %d / %d · Lv.%d" % [health, max_health, _hero_level]
     shop_health_label.add_theme_color_override("font_color", UI.RED if low_health else UI.MUTED)
     var heal_amount := int(data.get("heal_amount", 0))
     if heal_amount > 0:

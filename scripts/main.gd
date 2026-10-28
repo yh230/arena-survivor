@@ -21,6 +21,10 @@ const STAGE_NAMES := [
 const CHAPTER_MULT := [1.0, 1.22, 1.48]
 const STAGE_MULT := 0.05
 const HERO_ATTRIBUTE_WEAPON_DAMAGE := 1.15
+const HERO_DAMAGE_PER_LEVEL := 0.02
+const HERO_MAX_LEVEL := 20
+const HERO_XP_BASE := 6
+const HERO_XP_STEP := 2
 const WAVES_PER_STAGE := 16
 const BOSS_WAVES := [8, 16]
 const START_GOLD := 15
@@ -68,6 +72,9 @@ var treasure_spawned := false
 var elite_spawned := false
 
 var gold := START_GOLD
+var hero_level := 1
+var hero_xp := 0
+var hero_xp_to_next := 6
 var pickup_radius := 60.0
 var gold_mult := 1.0
 var sell_mult := 1.0
@@ -209,9 +216,12 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     player.set_physics_process(true)
     player.global_position = Vector2(640.0, 360.0)
     player.reset_for_run()
+    hero_level = 1
+    hero_xp = 0
+    hero_xp_to_next = _hero_xp_needed(hero_level)
     weapon_manager.visible = true
     weapon_manager.reset_build()
-    weapon_manager.set_character_damage_mult(HERO_ATTRIBUTE_WEAPON_DAMAGE)
+    _apply_hero_level()
     weapon_manager.buy_weapon(STARTER_WEAPON, mini(4, chapter))
     var second_starter := _pick_second_starter()
     if second_starter != "":
@@ -500,6 +510,7 @@ func _spawn_boss() -> void:
     boss.health_changed.connect(hud.set_boss_health)
     boss.defeated.connect(_on_boss_defeated)
     boss.minion_spawned.connect(_on_boss_minion_spawned)
+    boss.enrage_started.connect(_on_boss_enraged)
     hud.show_boss_bar(boss.health, boss.max_health)
     Audio.play("boss_spawn", -4.0)
     boss_spawned = true
@@ -511,6 +522,9 @@ func _on_boss_minion_spawned(minion) -> void:
     minion.health = minion.max_health
     minion.contact_damage = 8 + int(wave / 3)
 
+func _on_boss_enraged() -> void:
+    hud.show_notice("首领狂暴")
+
 func _on_boss_defeated() -> void:
     var boss = get_tree().get_first_node_in_group("boss")
     if boss != null:
@@ -519,6 +533,7 @@ func _on_boss_defeated() -> void:
 
 func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave := true) -> void:
     total_kills += 1
+    _gain_hero_xp(coin_count)
     if counts_toward_wave and wave_active and not boss_wave:
         wave_killed = mini(wave_total, wave_killed + 1)
         wave_remaining = maxi(0, wave_total - wave_killed)
@@ -857,6 +872,39 @@ func _apply_item_stats() -> void:
     player.health_changed.emit(player.health, player.max_health)
     hud.set_health(player.health, player.max_health)
 
+func _hero_xp_needed(level_no: int) -> int:
+    return HERO_XP_BASE + HERO_XP_STEP * (maxi(1, level_no) - 1)
+
+func _hero_damage_pct() -> int:
+    var mult := HERO_ATTRIBUTE_WEAPON_DAMAGE + HERO_DAMAGE_PER_LEVEL * float(hero_level - 1)
+    return int(round((mult - 1.0) * 100.0))
+
+func _apply_hero_level() -> void:
+    var mult := HERO_ATTRIBUTE_WEAPON_DAMAGE + HERO_DAMAGE_PER_LEVEL * float(hero_level - 1)
+    weapon_manager.set_character_damage_mult(mult)
+    player.set_hero_level(hero_level)
+    var shown_xp := hero_xp
+    if hero_level >= HERO_MAX_LEVEL:
+        shown_xp = hero_xp_to_next
+    hud.set_hero_progress(hero_level, shown_xp, hero_xp_to_next, _hero_damage_pct())
+
+func _gain_hero_xp(amount: int) -> void:
+    if amount <= 0 or hero_level >= HERO_MAX_LEVEL:
+        return
+    hero_xp += amount
+    var leveled := false
+    while hero_level < HERO_MAX_LEVEL and hero_xp >= hero_xp_to_next:
+        hero_xp -= hero_xp_to_next
+        hero_level += 1
+        hero_xp_to_next = _hero_xp_needed(hero_level)
+        leveled = true
+    _apply_hero_level()
+    if leveled:
+        hud.show_notice("机关术精进 · Lv.%d" % hero_level)
+        Audio.play("upgrade", -10.0)
+        Fx.burst(player.global_position, Color(0.85, 0.71, 0.42), 14)
+        ArtFX.flash_at(get_tree().current_scene, player.global_position, Color(1.0, 0.85, 0.45), 56.0, 0.28)
+
 func _on_stage_clear() -> void:
     stage_clear = true
     get_tree().paused = true
@@ -1032,6 +1080,7 @@ func _capture_screenshot() -> void:
 
     _begin_run("1-1", false)
     await get_tree().create_timer(1.6).timeout
+    _gain_hero_xp(27)
     weapon_manager.buy_weapon("peony", 2)
     weapon_manager.buy_weapon("maple", 2)
     weapon_manager.buy_weapon("justice", 1)
@@ -1089,8 +1138,8 @@ func _capture_screenshot() -> void:
     var boss = get_tree().get_first_node_in_group("boss")
     if boss != null:
         boss.max_health = 99999
-        boss.health = 99999
-        hud.set_boss_health(99999, 99999)
+        boss.health = int(float(boss.max_health) * 0.5) + 1
+        boss.take_damage(1)
     await get_tree().create_timer(3.0).timeout
     if boss != null and is_instance_valid(boss):
         boss.global_position = Vector2(640.0, 250.0)
@@ -1153,6 +1202,10 @@ func _run_smoke_test() -> void:
     if weapon_error != "":
         _fail_test(weapon_error)
         return
+    var hero_error := _check_hero_rules()
+    if hero_error != "":
+        _fail_test(hero_error)
+        return
 
     _begin_run("1-1", false)
     await get_tree().process_frame
@@ -1196,6 +1249,29 @@ func _run_smoke_test() -> void:
             starter_count += 1
     if starter_count < 2:
         _fail_test("second starter weapon missing")
+        return
+    if hero_level != 1 or not is_equal_approx(weapon_manager.get_weapon_damage_scale(), 1.15):
+        _fail_test("hero level start wrong")
+        return
+    _gain_hero_xp(hero_xp_to_next)
+    if hero_level != 2:
+        _fail_test("hero level up missing")
+        return
+    if weapon_manager.get_weapon_damage_scale() <= 1.15:
+        _fail_test("hero level damage scaling missing")
+        return
+    if player.get_skill_damage_mult() <= 1.0:
+        _fail_test("hero skill level scaling missing")
+        return
+    if hud.get_hero_level_text() != "Lv.2":
+        _fail_test("hero level HUD wrong")
+        return
+    hero_level = 1
+    hero_xp = 0
+    hero_xp_to_next = _hero_xp_needed(1)
+    _apply_hero_level()
+    if not is_equal_approx(weapon_manager.get_weapon_damage_scale(), 1.15):
+        _fail_test("hero level reset wrong")
         return
 
     var joystick = get_tree().get_first_node_in_group("virtual_joystick")
@@ -1562,6 +1638,12 @@ func _run_smoke_test() -> void:
     if boss == null or not hud.is_boss_bar_visible():
         _fail_test("wave 8 boss missing")
         return
+    var boss_speed: float = boss.move_speed
+    boss.health = int(float(boss.max_health) * 0.5) + 1
+    boss.take_damage(1)
+    if not boss.enraged or boss.move_speed <= boss_speed:
+        _fail_test("boss enrage phase missing")
+        return
     boss._spawn_minions()
     await get_tree().process_frame
     var minion_hooked := false
@@ -1713,6 +1795,19 @@ func _check_balance_rules() -> String:
         return "special enemy damage wrong"
     if not is_equal_approx(_chapter_gold_mult_for(1), 1.0) or not is_equal_approx(_chapter_gold_mult_for(3), 1.3):
         return "chapter gold mult wrong"
+    return ""
+
+func _check_hero_rules() -> String:
+    if not has_method("_hero_xp_needed") or not has_method("_gain_hero_xp"):
+        return "hero xp helpers missing"
+    if _hero_xp_needed(1) != 6:
+        return "hero xp base wrong"
+    if _hero_xp_needed(5) != 14:
+        return "hero xp growth wrong"
+    if HERO_MAX_LEVEL < 10:
+        return "hero level cap too low"
+    if not is_equal_approx(player.get_skill_damage_mult(), 1.0):
+        return "hero skill baseline wrong"
     return ""
 
 func _check_wave_rules() -> String:

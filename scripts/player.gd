@@ -10,6 +10,7 @@ const SKILL_RADIUS := 110.0
 const SKILL_FUSE := 0.6
 const SKILL_SLOW := 0.35
 const SKILL_KNOCKBACK := 60.0
+const SKILL_DAMAGE_PER_LEVEL := 0.025
 const INVULN_TIME := 0.5
 
 @export var move_speed := 360.0
@@ -31,6 +32,7 @@ var _anim := 0.0
 var _dust_timer := 0.0
 var _wave := 1
 var _chapter := 1
+var hero_level := 1
 
 func _ready() -> void:
     health = max_health
@@ -131,6 +133,12 @@ func set_wave_info(wave_no: int, chapter_no: int) -> void:
     _wave = wave_no
     _chapter = chapter_no
 
+func set_hero_level(level: int) -> void:
+    hero_level = maxi(1, level)
+
+func get_skill_damage_mult() -> float:
+    return 1.0 + SKILL_DAMAGE_PER_LEVEL * float(hero_level - 1)
+
 func reset_for_run() -> void:
     is_dead = false
     max_health = 120
@@ -139,6 +147,7 @@ func reset_for_run() -> void:
     invuln_time = 0.0
     skill_cooldown_left = 0.0
     hit_flash = 0.0
+    hero_level = 1
     health_changed.emit(health, max_health)
 
 func can_cast_skill() -> bool:
@@ -157,7 +166,7 @@ func try_cast_skill() -> bool:
     var target_pos: Vector2 = global_position + facing * 220.0
     if target != null:
         target_pos = target.global_position
-    var damage := 80 + 8 * _wave + 15 * (_chapter - 1)
+    var damage := int(round(float(80 + 8 * _wave + 15 * (_chapter - 1)) * get_skill_damage_mult()))
     var grenade = GRENADE_SCRIPT.new()
     grenade.z_index = 6
     get_tree().current_scene.add_child(grenade)

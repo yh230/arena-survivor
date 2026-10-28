@@ -115,7 +115,7 @@ func _handle_shop(stage_id: String, run_index: int) -> void:
             if main.gold != before_gold_after or main.weapon_manager.get_build_signature() != before_build_after:
                 buys.append("%s:%d" % [str(offer_after["id"]), int(offer_after["quality"])])
 
-    print("PLAYTEST_WAVE stage=%s run=%d wave=%d hp=%d/%d gold=%d kills=%d build=%s offers=%s buys=%s" % [
+    print("PLAYTEST_WAVE stage=%s run=%d wave=%d hp=%d/%d gold=%d kills=%d lv=%d xp=%d build=%s offers=%s buys=%s" % [
         stage_id,
         run_index + 1,
         main.wave,
@@ -123,6 +123,8 @@ func _handle_shop(stage_id: String, run_index: int) -> void:
         main.player.max_health,
         main.gold,
         main.total_kills,
+        main.hero_level,
+        main.hero_xp,
         main.weapon_manager.get_build_signature(),
         offers_text,
         ",".join(buys),
