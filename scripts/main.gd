@@ -31,6 +31,7 @@ const STARTER_WEAPON := "maple"
 const SECOND_STARTERS := ["peony", "justice", "elixir"]
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
+const PLAYTEST_SAVE_PATH := "user://arena_survivor_playtest.cfg"
 
 @onready var player = $Player
 @onready var enemies: Node2D = $Enemies
@@ -86,9 +87,10 @@ var shake_time := 0.0
 var shake_strength := 0.0
 
 func _ready() -> void:
-    test_mode = OS.get_cmdline_user_args().has("--smoke-test") or OS.get_cmdline_user_args().has("--screenshot") or OS.get_cmdline_user_args().has("--playtest")
+    var args := OS.get_cmdline_user_args()
+    test_mode = args.has("--smoke-test") or args.has("--screenshot") or args.has("--playtest")
     if test_mode:
-        save_path = TEST_SAVE_PATH
+        save_path = PLAYTEST_SAVE_PATH if args.has("--playtest") else TEST_SAVE_PATH
         DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
 
     backdrop = load("res://scripts/arena_backdrop.gd").new()
@@ -121,11 +123,11 @@ func _ready() -> void:
     else:
         _show_stage_select()
 
-    if OS.get_cmdline_user_args().has("--smoke-test"):
+    if args.has("--smoke-test"):
         call_deferred("_run_smoke_test")
-    elif OS.get_cmdline_user_args().has("--screenshot"):
+    elif args.has("--screenshot"):
         call_deferred("_capture_screenshot")
-    elif OS.get_cmdline_user_args().has("--playtest"):
+    elif args.has("--playtest"):
         call_deferred("_start_playtest")
 
 func _start_playtest() -> void:
@@ -1038,8 +1040,16 @@ func _capture_screenshot() -> void:
     weapon_manager.buy_item("boots", 2)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
     hud.set_item_slots(weapon_manager.get_item_slots())
+    await get_tree().process_frame
+    await get_tree().process_frame
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_battle.png")
+
+    player.try_cast_skill()
+    await get_tree().create_timer(0.62).timeout
+    await get_tree().process_frame
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_skill.png")
 
     gold = 100
     hud.set_gold(gold)
@@ -1112,7 +1122,7 @@ func _capture_screenshot() -> void:
     _save_screenshot("res://screenshots/m5_ch3_battle.png")
 
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_shop.png m5_treasure.png m5_elite.png m5_boss.png m5_clear.png m5_ch2_battle.png m5_ch3_battle.png")
+    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_skill.png m5_shop.png m5_treasure.png m5_elite.png m5_boss.png m5_clear.png m5_ch2_battle.png m5_ch3_battle.png")
     get_tree().quit(0)
 
 func _save_screenshot(path: String) -> Error:
@@ -1245,8 +1255,19 @@ func _run_smoke_test() -> void:
             return
 
     var skill_button: Button = hud.get_node("Root/SkillButton")
+    spawn_timer = 1.0e9
+    _clear_enemies()
+    await get_tree().process_frame
+    var skill_target = ENEMY_SCENE.instantiate()
+    skill_target.max_health = 400
+    skill_target.coin_drop = 0
+    skill_target.move_speed = 0.0
+    skill_target.contact_damage = 0
+    enemies.add_child(skill_target)
+    skill_target.global_position = player.global_position + Vector2(180.0, 0.0)
+    await get_tree().process_frame
     await _click_button(skill_button)
-    await get_tree().create_timer(0.2).timeout
+    await get_tree().create_timer(0.9).timeout
     if player.get_skill_cooldown_remaining() <= 0.0:
         _fail_test("skill cooldown did not start")
         return
@@ -1256,6 +1277,11 @@ func _run_smoke_test() -> void:
     if weapon_manager.overclock_time <= 0.0:
         _fail_test("skill overclock missing")
         return
+    if skill_target.health > 340:
+        _fail_test("skill grenade did not damage enemy")
+        return
+    skill_target.queue_free()
+    await get_tree().process_frame
 
     spawn_timer = 1.0e9
     _clear_enemies()
@@ -1342,6 +1368,32 @@ func _run_smoke_test() -> void:
         exploder.queue_free()
     for projectile in get_tree().get_nodes_in_group("enemy_projectile"):
         projectile.queue_free()
+    await get_tree().process_frame
+    player.global_position = Vector2(640.0, 360.0)
+    player.health = player.max_health
+    player.invuln_time = 0.0
+    player.health_changed.emit(player.health, player.max_health)
+    var toucher = ENEMY_SCENE.instantiate()
+    toucher.max_health = 500
+    toucher.move_speed = 0.0
+    toucher.contact_damage = 9
+    toucher.contact_interval = 0.2
+    enemies.add_child(toucher)
+    toucher.global_position = player.global_position
+    await get_tree().create_timer(0.15).timeout
+    if player.health > player.max_health - 9:
+        _fail_test("contact damage did not apply")
+        return
+    var after_contact: int = player.health
+    await get_tree().create_timer(0.2).timeout
+    if player.health != after_contact:
+        _fail_test("hit invulnerability did not block contact")
+        return
+    await get_tree().create_timer(0.6).timeout
+    if player.health >= after_contact:
+        _fail_test("contact damage did not resume after invulnerability")
+        return
+    toucher.queue_free()
     await get_tree().process_frame
     player.health = 30
     player.health_changed.emit(player.health, player.max_health)
@@ -1701,7 +1753,7 @@ func _check_weapon_rules() -> String:
         return "turret cap scaling wrong"
     if weapon_manager.get_emplacement_count() != 6:
         return "emplacement count wrong"
-    if weapon_manager.get_emplacement_position(0) != Vector2(640.0, 185.0):
+    if weapon_manager.get_emplacement_position(0) != Vector2(783.0, 258.0):
         return "emplacement layout wrong"
     if not is_equal_approx(weapon_manager._orbiter_radius(1), 150.0) or not is_equal_approx(weapon_manager._orbiter_radius(4), 195.0):
         return "orbiter emplacement radius wrong"

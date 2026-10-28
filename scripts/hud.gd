@@ -272,7 +272,7 @@ func _build_combat_ui() -> void:
     tip_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
     UI.apply_panel(tip_backdrop, Color(0.03, 0.07, 0.08, 0.82), Color(0.15, 0.25, 0.25, 0.5), 4, 1)
     combat_ui.add_child(tip_backdrop)
-    tip_label = UI.outlined(UI.label("拖动摇杆移动 · 自动攻击", 13, UI.MUTED), Color(0.01, 0.02, 0.03, 0.8), 3)
+    tip_label = UI.outlined(UI.label("拖动摇杆移动 · 点按震雷", 13, UI.MUTED), Color(0.01, 0.02, 0.03, 0.8), 3)
     tip_label.position = Vector2(850.0, 22.0)
     tip_label.size = Vector2(406.0, 26.0)
     tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -776,7 +776,7 @@ func set_best_wave(value: int) -> void:
     _update_sub_label()
 
 func _update_sub_label() -> void:
-    sub_label.text = "机关师 +15% · 敌 %d · 无尽 %d" % [_enemy_count, _best_wave]
+    sub_label.text = "机关师 · 机关伤害 +15%% · 敌 %d · 无尽 %d" % [_enemy_count, _best_wave]
 
 func set_skill_state(ready: bool, remaining: float, total: float) -> void:
     var ready_changed := ready != _skill_was_ready
@@ -809,7 +809,7 @@ func set_weapon_slots(slots: Array) -> void:
             name_label.visible = false
             quality_label.visible = false
             empty_label.visible = true
-            UI.apply_panel(panel, Color(0.03, 0.065, 0.075, 0.55), Color(0.12, 0.18, 0.19, 0.8), 6, 1)
+            UI.apply_panel(panel, Color(0.035, 0.075, 0.085, 0.86), Color(0.16, 0.24, 0.25, 0.95), 6, 1)
             continue
 
         var slot: Dictionary = slots[index]
@@ -853,7 +853,7 @@ func set_item_slots(slots: Array) -> void:
             name_label.visible = false
             quality_label.visible = false
             empty_label.visible = true
-            UI.apply_panel(panel, Color(0.03, 0.065, 0.075, 0.5), Color(0.12, 0.18, 0.19, 0.7), 5, 1)
+            UI.apply_panel(panel, Color(0.035, 0.075, 0.085, 0.82), Color(0.15, 0.22, 0.23, 0.9), 5, 1)
             continue
 
         var slot: Dictionary = slots[index]
@@ -1794,7 +1794,11 @@ func _refresh_sell_slots(uis: Array, slots: Array, kind: String) -> void:
         seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.06, 0.11, 0.12, 0.95), color, 13, 1))
         name_label.text = str(slot.get("title", slot_id))
         name_label.add_theme_color_override("font_color", UI.TEXT)
-        quality_label.text = UI.quality_name(quality)
+        var slot_name := str(slot.get("slot_name", ""))
+        var quality_text := UI.quality_name(quality)
+        if slot_name != "":
+            quality_text += " · " + slot_name
+        quality_label.text = quality_text
         quality_label.add_theme_color_override("font_color", color)
         sell_label.text = "售 %d" % int(slot.get("sell_price", 0))
         button.modulate = Color.WHITE

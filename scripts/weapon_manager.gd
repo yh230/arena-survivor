@@ -2,14 +2,14 @@ extends Node2D
 
 const UI := preload("res://scripts/ui_forge.gd")
 const EMPLACEMENTS := [
-    Vector2(640.0, 185.0),
-    Vector2(792.0, 272.0),
-    Vector2(792.0, 448.0),
-    Vector2(640.0, 535.0),
-    Vector2(488.0, 448.0),
-    Vector2(488.0, 272.0),
+    Vector2(783.0, 258.0),
+    Vector2(783.0, 422.0),
+    Vector2(640.0, 505.0),
+    Vector2(497.0, 422.0),
+    Vector2(497.0, 258.0),
+    Vector2(640.0, 175.0),
 ]
-const EMPLACEMENT_NAMES := ["北台", "东北台", "东南台", "南台", "西南台", "西北台"]
+const EMPLACEMENT_NAMES := ["东北台", "东南台", "南台", "西南台", "西北台", "北台"]
 const WEAPON_DAMAGE_SCALE := 1.15
 const OVERCLOCK_MULT := 1.30
 const MAX_WEAPON_SLOTS := 6
@@ -140,6 +140,7 @@ func _update_turrets(delta: float) -> void:
             var deploy_pos := anchor + Vector2(0.0, 42.0)
             if deploy_target != null:
                 deploy_pos = anchor + (deploy_target.global_position - anchor).normalized() * 34.0
+            deploy_pos = Vector2(clampf(deploy_pos.x, 48.0, 1232.0), clampf(deploy_pos.y, 110.0, 520.0))
             turrets.append({
                 "pos": deploy_pos,
                 "life": _turret_lifetime(quality),
@@ -499,7 +500,7 @@ func _draw_emplacements() -> void:
         draw_arc(pos, 22.0, 0.0, TAU, 32, frame, 2.0, true)
         draw_arc(pos, 15.0, 0.0, TAU, 24, Color(frame.r, frame.g, frame.b, 0.32), 1.0, true)
         if not owned:
-            draw_string(font, pos + Vector2(-20.0, 5.0), "空", HORIZONTAL_ALIGNMENT_CENTER, 40.0, 10, Color(0.8, 0.9, 0.9, 0.16))
+            draw_string(font, pos + Vector2(-20.0, 4.0), str(EMPLACEMENT_NAMES[index]), HORIZONTAL_ALIGNMENT_CENTER, 40.0, 9, Color(0.8, 0.9, 0.9, 0.34))
             continue
         var quality := _q(owner)
         var quality_color := get_quality_color(quality)

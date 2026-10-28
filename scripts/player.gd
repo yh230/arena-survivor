@@ -59,6 +59,11 @@ func _update_art(delta: float) -> void:
     if is_dead:
         return
 
+    if invuln_time > 0.0:
+        art.modulate.a = 0.55 + 0.45 * absf(sin(invuln_time * 34.0))
+    elif art.modulate.a != 1.0:
+        art.modulate.a = 1.0
+
     var target_tilt := clampf(facing.x, -1.0, 1.0) * 0.16
     art.rotation = lerp_angle(art.rotation, target_tilt, clampf(delta * 12.0, 0.0, 1.0))
     art.flip_h = facing.x < -0.01
@@ -162,7 +167,7 @@ func try_cast_skill() -> bool:
     var manager = get_node_or_null("WeaponManager")
     if manager != null and manager.has_method("set_overclock"):
         manager.set_overclock(4.0)
-    Audio.play("dash", -8.0)
+    Audio.play("chain", -10.0)
     ArtFX.flash_at(get_tree().current_scene, global_position, Color(0.3, 1.0, 0.9), 36.0, 0.18)
     return true
 
