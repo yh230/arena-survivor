@@ -19,7 +19,7 @@ func _ready() -> void:
     add_to_group("boss")
     coin_drop = 10
     contact_range = 78.0
-    damage_number_height = -112.0
+    damage_number_height = -84.0
     damage_number_color = Color("#fecaca")
     health_bar_color = Color("#fca5a5")
     death_color = Color("#ef4444")
@@ -54,6 +54,9 @@ func _art_bob_rate() -> float:
 
 func _art_bob_size() -> float:
     return 2.0
+
+func _art_glow_boost() -> float:
+    return 1.0 + (0.8 if enraged else 0.0)
 
 func _process(delta: float) -> void:
     super._process(delta)
@@ -99,7 +102,10 @@ func _enrage() -> void:
     enrage_started.emit()
     Audio.play("boss_spawn", -10.0)
     Fx.burst(global_position, Color(1.0, 0.45, 0.2), 22)
-    ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.4, 0.2), 200.0, 0.4)
+    Fx.shock(global_position, Color(1.0, 0.42, 0.18), 230.0, 0.55)
+    Fx.ring(global_position, Color(1.0, 0.55, 0.25), 210.0, 0.5, 6.0)
+    Fx.sparks(global_position, Color(1.0, 0.55, 0.2), 20, 340.0, 0.5)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.4, 0.2), 220.0, 0.4)
     Fx.shake(10.0, 0.3)
     queue_redraw()
 
@@ -113,8 +119,10 @@ func _die() -> void:
     active = false
     defeated.emit()
     Audio.play("boss_die", -2.0)
-    Fx.burst(global_position, Color("#ef4444"), 24)
-    ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.4, 0.2), 260.0, 0.5)
+    Fx.burst(global_position, Color("#ef4444"), 30)
+    Fx.shock(global_position, Color(1.0, 0.45, 0.2), 320.0, 0.7)
+    Fx.sparks(global_position, Color(1.0, 0.55, 0.25), 24, 380.0, 0.6)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.4, 0.2), 300.0, 0.5)
     Fx.shake(14.0, 0.35)
     queue_free()
 
@@ -129,9 +137,25 @@ func _spawn_minions() -> void:
         minion_spawned.emit(minion)
 
 func _draw() -> void:
-    if enraged and active:
-        draw_arc(Vector2.ZERO, 116.0, 0.0, TAU, 48, Color(1.0, 0.4, 0.2, 0.32), 4.0, true)
     if minion_timer < 1.2 and active:
         var ratio := 1.0 - clampf(minion_timer / 1.2, 0.0, 1.0)
         draw_arc(Vector2.ZERO, 112.0 + ratio * 12.0, 0.0, TAU, 48, Color(1.0, 0.45, 0.25, 0.3 + ratio * 0.35), 3.0, true)
+        for index in range(6):
+            var tick_angle := TAU * float(index) / 6.0 + anim_time * 0.8
+            draw_line(
+                Vector2.from_angle(tick_angle) * (118.0 + ratio * 8.0),
+                Vector2.from_angle(tick_angle) * (128.0 + ratio * 10.0),
+                Color(1.0, 0.55, 0.25, 0.35 + ratio * 0.3), 2.0, true
+            )
+    if enraged and active:
+        var pulse := 0.5 + 0.5 * sin(anim_time * 5.5)
+        draw_arc(Vector2.ZERO, 116.0 + pulse * 5.0, 0.0, TAU, 64, Color(1.0, 0.36, 0.14, 0.34 + pulse * 0.18), 4.0, true)
+        draw_arc(Vector2.ZERO, 104.0, -anim_time * 1.2, -anim_time * 1.2 + TAU * 0.7, 48, Color(1.0, 0.55, 0.2, 0.4), 2.0, true)
+        for index in range(8):
+            var rune_angle := anim_time * 0.9 + TAU * float(index) / 8.0
+            draw_line(
+                Vector2.from_angle(rune_angle) * 122.0,
+                Vector2.from_angle(rune_angle) * 132.0,
+                Color(1.0, 0.45, 0.18, 0.45 + pulse * 0.25), 2.0, true
+            )
     _draw_status_marks()

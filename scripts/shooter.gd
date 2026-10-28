@@ -103,7 +103,8 @@ func _shoot(direction: Vector2) -> void:
     projectile.damage = projectile_damage
     shots_fired += 1
     Audio.play("enemy_shot", -22.0)
-    ArtFX.flash_at(get_tree().current_scene, global_position + direction * 30.0, Color(0.8, 0.45, 1.0), 26.0, 0.14)
+    ArtFX.flash_at(get_tree().current_scene, global_position + direction * 30.0, Color(0.8, 0.45, 1.0), 28.0, 0.14)
+    Fx.sparks(global_position + direction * 30.0, Color(0.82, 0.5, 1.0), 4, 120.0, 0.2)
 
 func _draw() -> void:
     var aim := Vector2.RIGHT

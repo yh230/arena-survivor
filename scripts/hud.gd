@@ -540,6 +540,21 @@ func _build_weapon_bar() -> void:
         empty_label.visible = false
         slot.add_child(empty_label)
 
+        var slot_badge := UI.label("", 8, UI.MUTED)
+        slot_badge.position = Vector2(68.0, 45.0)
+        slot_badge.size = Vector2(30.0, 14.0)
+        slot_badge.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+        slot_badge.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+        slot_badge.visible = false
+        slot.add_child(slot_badge)
+
+        var base_line := ColorRect.new()
+        base_line.position = Vector2(2.0, 61.0)
+        base_line.size = Vector2(100.0, 1.0)
+        base_line.color = Color(0.85, 0.71, 0.42, 0.16)
+        base_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        slot.add_child(base_line)
+
         weapon_slots.append({
             "panel": slot,
             "accent": accent,
@@ -548,6 +563,7 @@ func _build_weapon_bar() -> void:
             "name": name_label,
             "quality": quality_label,
             "empty": empty_label,
+            "slot_badge": slot_badge,
         })
 
 func _build_item_bar() -> void:
@@ -841,6 +857,7 @@ func set_weapon_slots(slots: Array) -> void:
         var name_label: Label = ui["name"]
         var quality_label: Label = ui["quality"]
         var empty_label: Label = ui["empty"]
+        var slot_badge: Label = ui["slot_badge"]
         var filled: bool = index < slots.size() and not slots[index].is_empty()
         if not filled:
             accent.color = Color(0.0, 0.0, 0.0, 0.0)
@@ -848,6 +865,7 @@ func set_weapon_slots(slots: Array) -> void:
             name_label.visible = false
             quality_label.visible = false
             empty_label.visible = true
+            slot_badge.visible = false
             UI.apply_panel(panel, Color(0.035, 0.075, 0.085, 0.86), Color(0.16, 0.24, 0.25, 0.95), 6, 1)
             continue
 
@@ -870,6 +888,10 @@ func set_weapon_slots(slots: Array) -> void:
         quality_label.visible = true
         quality_label.add_theme_color_override("font_color", color)
         empty_label.visible = false
+        var slot_index := int(slot.get("slot", -1))
+        slot_badge.text = "%d号" % (slot_index + 1) if slot_index >= 0 else ""
+        slot_badge.add_theme_color_override("font_color", Color(color.r, color.g, color.b, 0.85))
+        slot_badge.visible = slot_index >= 0
         UI.apply_panel(panel, Color(0.045, 0.10, 0.11, 0.94), UI.DARK_LINE, 6, 1)
         if quality > old_quality and old_quality > 0:
             _flash_panel(panel)

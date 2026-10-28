@@ -1085,11 +1085,17 @@ func _capture_screenshot() -> void:
     weapon_manager.buy_weapon("maple", 2)
     weapon_manager.buy_weapon("justice", 1)
     weapon_manager.buy_weapon("vigil", 3)
+    weapon_manager.buy_weapon("hammer", 2)
+    weapon_manager.buy_weapon("elixir", 2)
     weapon_manager.buy_item("magnet", 1)
     weapon_manager.buy_item("boots", 2)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
     hud.set_item_slots(weapon_manager.get_item_slots())
     await get_tree().process_frame
+    _spawn_screenshot_dummies()
+    await get_tree().create_timer(3.2).timeout
+    _prime_weapon_showcase()
+    await get_tree().create_timer(0.08).timeout
     await get_tree().process_frame
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_battle.png")
@@ -1119,6 +1125,14 @@ func _capture_screenshot() -> void:
     get_tree().paused = false
     hud.hide_shop()
     _start_wave(4)
+    await get_tree().process_frame
+    var treasure = get_tree().get_first_node_in_group("treasure")
+    if treasure != null:
+        treasure.max_health = 9999
+        treasure.health = 9999
+        treasure.active = false
+        treasure.global_position = Vector2(820.0, 320.0)
+        treasure.set_physics_process(false)
     await get_tree().create_timer(0.8).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_treasure.png")
@@ -1127,7 +1141,7 @@ func _capture_screenshot() -> void:
     await get_tree().create_timer(0.5).timeout
     var elite = get_tree().get_first_node_in_group("elite")
     if elite != null:
-        elite.global_position = Vector2(640.0, 300.0)
+        elite.global_position = Vector2(780.0, 352.0)
     await get_tree().create_timer(0.25).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_elite.png")
@@ -1142,8 +1156,10 @@ func _capture_screenshot() -> void:
         boss.take_damage(1)
     await get_tree().create_timer(3.0).timeout
     if boss != null and is_instance_valid(boss):
-        boss.global_position = Vector2(640.0, 250.0)
+        boss.global_position = Vector2(680.0, 300.0)
         boss.velocity = Vector2.ZERO
+        boss.set_physics_process(false)
+    player.global_position = Vector2(640.0, 420.0)
     await get_tree().create_timer(0.25).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_boss.png")
@@ -1154,7 +1170,7 @@ func _capture_screenshot() -> void:
     Fx.clear_effects()
     stage_clear = true
     get_tree().paused = true
-    hud.show_stage_clear("1-1 · 熔炉入口", true, "波次 16 / 16\n金币 100\n构筑 4 武器 · 2 道具", "下一关 · 1-2 风蚀回廊")
+    hud.show_stage_clear("1-1 · 熔炉入口", true, "波次 16 / 16\n金币 100\n构筑 6 武器 · 2 道具", "下一关 · 1-2 风蚀回廊")
     await get_tree().create_timer(0.5).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_clear.png")
@@ -1173,6 +1189,33 @@ func _capture_screenshot() -> void:
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
     print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_skill.png m5_shop.png m5_treasure.png m5_elite.png m5_boss.png m5_clear.png m5_ch2_battle.png m5_ch3_battle.png")
     get_tree().quit(0)
+
+func _prime_weapon_showcase() -> void:
+    weapon_manager.turret_timer = 0.0
+    weapon_manager.chain_timer = 0.0
+    weapon_manager.pierce_timer = 0.0
+    weapon_manager.hammer_timer = 0.0
+    weapon_manager.elixir_timer = 0.0
+    for turret in weapon_manager.turrets:
+        turret["fire"] = 0.0
+
+func _spawn_screenshot_dummies() -> void:
+    spawn_timer = 1.0e9
+    wave_spawned = wave_total
+    _clear_enemies()
+    var spots := [
+        Vector2(900.0, 420.0), Vector2(700.0, 258.0), Vector2(560.0, 470.0),
+        Vector2(400.0, 380.0), Vector2(450.0, 330.0), Vector2(700.0, 220.0),
+    ]
+    for spot in spots:
+        var dummy = ENEMY_SCENE.instantiate()
+        enemies.add_child(dummy)
+        dummy.global_position = spot
+        dummy.max_health = 999
+        dummy.health = 720
+        dummy.move_speed = 0.0
+        dummy.contact_range = 0.0
+        dummy.died.connect(_on_enemy_died)
 
 func _save_screenshot(path: String) -> Error:
     var image := get_viewport().get_texture().get_image()

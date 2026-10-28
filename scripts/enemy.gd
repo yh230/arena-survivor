@@ -47,6 +47,16 @@ func _physics_process(delta: float) -> void:
 
 func _draw() -> void:
     if elite:
-        draw_arc(Vector2.ZERO, status_radius + 1.0, 0.0, TAU, 40, Color("#fbbf24"), 2.5, true)
+        var pulse := 0.6 + 0.4 * sin(anim_time * 4.0)
+        draw_arc(Vector2.ZERO, status_radius + 1.0, 0.0, TAU, 40, Color(1.0, 0.82, 0.25, 0.5 + pulse * 0.25), 2.5, true)
+        var spin := anim_time * 0.9
+        for index in range(3):
+            var start := spin + TAU * float(index) / 3.0
+            draw_arc(Vector2.ZERO, status_radius + 7.0, start, start + 0.7, 12, Color(1.0, 0.85, 0.3, 0.5), 2.0, true)
+        var crown_y := -status_radius - 16.0
+        draw_colored_polygon(PackedVector2Array([
+            Vector2(-8.0, crown_y), Vector2(-5.0, crown_y + 8.0), Vector2(0.0, crown_y + 3.0),
+            Vector2(5.0, crown_y + 8.0), Vector2(8.0, crown_y),
+        ]), Color(1.0, 0.8, 0.25, 0.9))
     _draw_status_marks()
     _draw_health_bar()

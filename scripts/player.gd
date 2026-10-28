@@ -177,7 +177,9 @@ func try_cast_skill() -> bool:
     if manager != null and manager.has_method("set_overclock"):
         manager.set_overclock(4.0)
     Audio.play("chain", -10.0)
-    ArtFX.flash_at(get_tree().current_scene, global_position, Color(0.3, 1.0, 0.9), 36.0, 0.18)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color(0.3, 1.0, 0.9), 48.0, 0.2)
+    Fx.ring(global_position, Color(0.35, 1.0, 0.9), 60.0, 0.32, 3.0)
+    Fx.sparks(global_position, Color(0.4, 1.0, 0.9), 10, 180.0, 0.28)
     return true
 
 func _nearest_enemy(from: Vector2, max_range: float):
@@ -200,6 +202,8 @@ func take_damage(amount: int) -> void:
     hit_flash = 0.15
     Audio.play("hurt", -8.0)
     Fx.damage_number(global_position + Vector2(0.0, -30.0), amount, Color("#fca5a5"))
+    Fx.ring(global_position, Color("#fca5a5"), 38.0, 0.24, 2.5)
+    Fx.sparks(global_position, Color("#fca5a5"), 7, 190.0, 0.26)
     Fx.shake(7.0, 0.16)
     health_changed.emit(health, max_health)
     if health <= 0:
@@ -216,12 +220,23 @@ func _die() -> void:
         core_glow.visible = false
     if aura != null:
         aura.modulate.a = 0.0
-    Fx.burst(global_position, Color("#5eead4"), 12)
+    Fx.burst(global_position, Color("#5eead4"), 18)
+    Fx.shock(global_position, Color("#5eead4"), 90.0, 0.5)
+    ArtFX.flash_at(get_tree().current_scene, global_position, Color("#5eead4"), 120.0, 0.4)
+    Fx.shake(12.0, 0.3)
     queue_redraw()
     died.emit()
 
 func _draw() -> void:
     if is_dead:
         return
-    draw_arc(Vector2.ZERO, 25.0, 0.0, TAU, 36, Color(0.85, 0.71, 0.42, 0.32), 1.5, true)
-    draw_arc(Vector2.ZERO, 20.0, -PI * 0.25, PI * 0.25, 24, Color(0.25, 0.95, 0.85, 0.42), 2.0, true)
+    var pulse := 0.5 + 0.5 * sin(_anim * 3.6)
+    var spin := _anim * 0.45
+    draw_arc(Vector2.ZERO, 29.0, spin, spin + TAU * 0.78, 40, Color(0.85, 0.71, 0.42, 0.24), 1.5, true)
+    draw_arc(Vector2.ZERO, 29.0, spin + PI, spin + PI + TAU * 0.2, 16, Color(0.85, 0.71, 0.42, 0.16), 1.0, true)
+    for index in range(4):
+        var notch := -_anim * 0.7 + TAU * float(index) / 4.0
+        draw_line(Vector2.from_angle(notch) * 30.0, Vector2.from_angle(notch) * 34.0, Color(0.9, 0.76, 0.45, 0.34), 1.5, true)
+    draw_arc(Vector2.ZERO, 22.0, -PI * 0.25 + _anim * 0.2, PI * 0.25 + _anim * 0.2, 24, Color(0.25, 0.95, 0.85, 0.32 + 0.18 * pulse), 2.0, true)
+    if can_cast_skill():
+        draw_arc(Vector2.ZERO, 36.0, -PI * 0.5, -PI * 0.5 + TAU * (0.55 + 0.1 * pulse), 48, Color(0.4, 1.0, 0.92, 0.08 + 0.09 * pulse), 2.5, true)

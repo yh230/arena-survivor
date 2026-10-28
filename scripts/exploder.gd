@@ -90,7 +90,10 @@ func _explode() -> void:
             if player.has_method("take_damage"):
                 player.take_damage(explosion_damage)
     Audio.play("explode", -4.0)
-    Fx.burst(global_position, Color("#fb923c"), 14)
+    Fx.burst(global_position, Color("#fb923c"), 16)
+    Fx.ring(global_position, Color("#fb923c"), explosion_radius, 0.38, 5.0)
+    Fx.shock(global_position, Color(1.0, 0.55, 0.15), explosion_radius, 0.4)
+    Fx.sparks(global_position, Color(1.0, 0.6, 0.2), 10, 280.0, 0.34)
     ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.55, 0.15), 130.0, 0.38)
     Fx.shake(10.0, 0.22)
     died.emit(global_position, coin_drop)
