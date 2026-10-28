@@ -3,7 +3,7 @@ extends CharacterBody2D
 signal health_changed(current: int, maximum: int)
 signal died
 
-@export var move_speed := 320.0
+@export var move_speed := 340.0
 @export var dash_speed := 900.0
 @export var dash_duration := 0.14
 @export var dash_cooldown := 2.5

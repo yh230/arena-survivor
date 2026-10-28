@@ -52,7 +52,10 @@ var stage_clear := false
 
 var wave := 1
 var wave_active := false
-var wave_time_left := 0.0
+var wave_total := 0
+var wave_spawned := 0
+var wave_killed := 0
+var wave_remaining := 0
 var spawn_timer := 0.0
 var boss_spawn_timer := 0.0
 var boss_spawned := false
@@ -146,20 +149,16 @@ func _process(delta: float) -> void:
         if not treasure_spawned and wave % 8 == 4:
             treasure_spawned = true
             _spawn_treasure()
-        wave_time_left -= delta
         spawn_timer -= delta
-        if spawn_timer <= 0.0 and enemies.get_child_count() < _enemy_cap():
+        if wave_spawned < wave_total and spawn_timer <= 0.0 and enemies.get_child_count() < _enemy_cap():
             _spawn_enemy()
             spawn_timer = _spawn_interval()
-        if wave_time_left <= 0.0:
+        if wave_spawned >= wave_total and wave_killed >= wave_total:
             _finish_wave()
             return
 
     hud.set_enemy_count(enemies.get_child_count())
-    if boss_wave:
-        hud.set_wave_time(0.0, true)
-    else:
-        hud.set_wave_time(maxf(0.0, wave_time_left), false)
+    hud.set_wave_progress(wave_remaining, wave_total, boss_wave)
     hud.set_gold(gold)
 
 func _show_stage_select() -> void:
@@ -199,7 +198,7 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     player.is_dead = false
     player.max_health = 100
     player.health = 100
-    player.move_speed = 320.0
+    player.move_speed = 340.0
     player.health_changed.emit(player.health, player.max_health)
     weapon_manager.visible = true
     weapon_manager.reset_build()
@@ -275,6 +274,11 @@ func _quality_for_roll(roll: float, progress: float) -> int:
 func _coin_value_for(wave_no: int) -> int:
     return 1 + int(wave_no / 6)
 
+func _wave_enemy_count_for(wave_no: int, chapter_no: int, endless: bool) -> int:
+    if endless:
+        return 12 + wave_no * 2
+    return 10 + wave_no + (chapter_no - 1) * 2
+
 func _enemy_cap_for(wave_no: int) -> int:
     if wave_no <= 2:
         return 12
@@ -307,14 +311,17 @@ func _start_wave(number: int) -> void:
     boss_spawn_timer = 0.6
     treasure_spawned = false
     elite_spawned = false
-    wave_time_left = 18.0 + float(chapter - 1) * 2.0
+    wave_total = _wave_enemy_count_for(number, chapter, is_endless)
+    wave_spawned = 0
+    wave_killed = 0
+    wave_remaining = wave_total
     spawn_timer = 0.6
     hud.hide_boss_bar()
     hud.set_wave(wave, WAVES_PER_STAGE if not is_endless else 0)
     hud.set_stage(_stage_label())
     hud.set_gold(gold)
     hud.set_enemy_count(0)
-    hud.set_wave_time(wave_time_left, boss_wave)
+    hud.set_wave_progress(wave_remaining, wave_total, boss_wave)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
     hud.set_item_slots(weapon_manager.get_item_slots())
     Audio.play("wave_start", -12.0)
@@ -383,6 +390,7 @@ func _spawn_enemy() -> void:
     enemies.add_child(enemy)
     enemy.global_position = pos
     enemy.died.connect(_on_enemy_died)
+    wave_spawned += 1
 
 func _spawn_treasure() -> void:
     var imp = TREASURE_SCENE.instantiate()
@@ -395,7 +403,7 @@ func _spawn_treasure() -> void:
         randf_range(180.0, view_size.x - 180.0),
         randf_range(150.0, view_size.y - 150.0)
     )
-    imp.died.connect(_on_enemy_died)
+    imp.died.connect(_on_enemy_died.bind(false))
     Fx.burst(imp.global_position, Color("#fbbf24"), 12)
     Audio.play("wave_start", -18.0)
     hud.show_notice("机关灵出现")
@@ -414,6 +422,7 @@ func _spawn_elite() -> void:
     enemy.global_position = _edge_spawn_position()
     enemy.add_to_group("elite")
     enemy.died.connect(_on_enemy_died)
+    wave_spawned += 1
     Fx.burst(enemy.global_position, Color("#fbbf24"), 16)
     Audio.play("wave_start", -16.0)
     hud.show_notice("精英机关兵来袭")
@@ -446,8 +455,12 @@ func _on_boss_defeated() -> void:
         _on_enemy_died(boss.global_position, 10)
     hud.hide_boss_bar()
 
-func _on_enemy_died(drop_position: Vector2, coin_count: int) -> void:
+func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave := true) -> void:
     total_kills += 1
+    if counts_toward_wave and wave_active and not boss_wave:
+        wave_killed = mini(wave_total, wave_killed + 1)
+        wave_remaining = maxi(0, wave_total - wave_killed)
+        hud.set_wave_progress(wave_remaining, wave_total, false)
     var base_value := _coin_value_for(wave)
     for index in range(coin_count):
         var coin = COIN_SCRIPT.new()
@@ -761,7 +774,7 @@ func _apply_item_stats() -> void:
     pickup_radius = float(stats["pickup_radius"])
     gold_mult = float(stats["gold_mult"])
     sell_mult = float(stats["sell_mult"])
-    player.move_speed = 320.0 + float(stats["move_speed_bonus"])
+    player.move_speed = 340.0 + float(stats["move_speed_bonus"])
     var new_max := 100 + int(stats["max_health_bonus"])
     if new_max != player.max_health:
         var gained: int = new_max - int(player.max_health)
@@ -974,7 +987,7 @@ func _capture_screenshot() -> void:
 
     gold = 100
     hud.set_gold(gold)
-    wave_time_left = 0.05
+    _test_finish_wave()
     await get_tree().create_timer(0.5).timeout
     if shop_open:
         shop_offers = [
@@ -1054,6 +1067,10 @@ func _run_smoke_test() -> void:
     if balance_error != "":
         _fail_test(balance_error)
         return
+    var wave_error := _check_wave_rules()
+    if wave_error != "":
+        _fail_test(wave_error)
+        return
 
     _begin_run("1-1", false)
     await get_tree().process_frame
@@ -1067,10 +1084,31 @@ func _run_smoke_test() -> void:
     if weapon_manager.get_weapon_quality(STARTER_WEAPON) < 1:
         _fail_test("starter weapon missing")
         return
+    if wave_total != 11 or wave_remaining != 11:
+        _fail_test("wave quota not initialised")
+        return
+    if not hud.has_method("get_wave_remaining_text"):
+        _fail_test("wave remaining HUD missing")
+        return
+    if hud.get_wave_remaining_text() != "剩余 11 / 11":
+        _fail_test("wave remaining HUD wrong")
+        return
+    if absf(player.move_speed - 340.0) > 0.01:
+        _fail_test("base move speed not tuned")
+        return
 
     var joystick = get_tree().get_first_node_in_group("virtual_joystick")
     if joystick == null:
         _fail_test("virtual joystick missing")
+        return
+    if not joystick.has_method("_vector_for_offset"):
+        _fail_test("joystick response helper missing")
+        return
+    if joystick._vector_for_offset(Vector2(3.0, 0.0)).length_squared() != 0.0:
+        _fail_test("joystick dead zone too large")
+        return
+    if joystick._vector_for_offset(Vector2(72.0, 0.0)).length() < 0.95:
+        _fail_test("joystick response curve too slow")
         return
     var input_mode := "windowed"
     if DisplayServer.get_name() == "headless":
@@ -1129,7 +1167,6 @@ func _run_smoke_test() -> void:
         _fail_test("dash did not move player")
         return
 
-    wave_time_left = 9999.0
     spawn_timer = 1.0e9
     _clear_enemies()
     player.global_position = Vector2(640.0, 360.0)
@@ -1186,7 +1223,18 @@ func _run_smoke_test() -> void:
     player.health_changed.emit(player.health, player.max_health)
 
     _clear_enemies()
-    wave_time_left = 0.05
+    spawn_timer = 1.0e9
+    wave_spawned = wave_total
+    wave_killed = wave_total - 1
+    wave_remaining = 1
+    await get_tree().create_timer(0.4).timeout
+    if shop_open:
+        _fail_test("wave finished with enemies remaining")
+        return
+    _spawn_enemy()
+    await get_tree().process_frame
+    for enemy in enemies.get_children():
+        enemy.take_damage(999999)
     await get_tree().create_timer(0.5).timeout
     if not shop_open or not hud.is_shop_visible():
         _fail_test("shop did not open after wave")
@@ -1274,7 +1322,7 @@ func _run_smoke_test() -> void:
     if item_type == "magnet" and pickup_radius <= float(item_before["pickup_radius"]):
         _fail_test("magnet effect did not apply")
         return
-    if item_type == "boots" and player.move_speed <= 320.0:
+    if item_type == "boots" and player.move_speed <= 340.0:
         _fail_test("boots effect did not apply")
         return
     if item_type == "holy_fire":
@@ -1402,9 +1450,7 @@ func _run_smoke_test() -> void:
     if not is_endless or wave != 1:
         _fail_test("endless run did not start")
         return
-    wave_time_left = 0.05
-    spawn_timer = 1.0e9
-    _clear_enemies()
+    _test_finish_wave()
     await get_tree().create_timer(0.5).timeout
     if not shop_open:
         _fail_test("endless shop missing")
@@ -1470,6 +1516,26 @@ func _check_balance_rules() -> String:
     if not is_equal_approx(_wave_heal_ratio(true), 0.25):
         return "boss wave heal wrong"
     return ""
+
+func _check_wave_rules() -> String:
+    if not has_method("_wave_enemy_count_for"):
+        return "wave quota helper missing"
+    if _wave_enemy_count_for(1, 1, false) != 11:
+        return "wave 1 quota wrong"
+    if _wave_enemy_count_for(16, 1, false) != 26:
+        return "wave 16 quota wrong"
+    if _wave_enemy_count_for(16, 3, false) != 30:
+        return "chapter quota scaling wrong"
+    if _wave_enemy_count_for(1, 1, true) != 14:
+        return "endless quota wrong"
+    return ""
+
+func _test_finish_wave() -> void:
+    spawn_timer = 1.0e9
+    wave_spawned = wave_total
+    wave_killed = wave_total
+    wave_remaining = 0
+    _clear_enemies()
 
 func _fail_test(reason: String) -> void:
     push_error("SMOKE_TEST_FAIL: " + reason)

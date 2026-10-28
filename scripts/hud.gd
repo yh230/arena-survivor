@@ -312,7 +312,7 @@ func _build_stats_panel() -> void:
     spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
     spacer.mouse_filter = Control.MOUSE_FILTER_IGNORE
     gold_row.add_child(spacer)
-    timer_label = UI.label("剩余 15 秒", 12, UI.MUTED)
+    timer_label = UI.label("剩余 0 / 0", 12, UI.MUTED)
     gold_row.add_child(timer_label)
     box.add_child(gold_row)
 
@@ -504,18 +504,15 @@ func _build_item_bar() -> void:
 func _build_inputs() -> void:
     joystick = Control.new()
     joystick.name = "Joystick"
-    joystick.position = Vector2(32.0, 468.0)
-    joystick.size = Vector2(220.0, 220.0)
+    joystick.position = Vector2.ZERO
+    joystick.size = Vector2(640.0, 720.0)
     joystick.add_to_group("virtual_joystick")
     joystick.set_script(JOYSTICK_SCRIPT)
-    joystick.set("base_radius", 100.0)
-    joystick.set("knob_radius", 42.0)
+    joystick.set("base_radius", 90.0)
+    joystick.set("knob_radius", 38.0)
+    joystick.set("dead_zone", 0.06)
+    joystick.set("anchor_center", Vector2(142.0, 578.0))
     root.add_child(joystick)
-    var move_label := UI.label("移动", 9, UI.MUTED)
-    move_label.position = Vector2(0.0, 190.0)
-    move_label.size = Vector2(220.0, 16.0)
-    move_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-    joystick.add_child(move_label)
     joystick.visible = false
 
     dash_ring = Control.new()
@@ -651,13 +648,19 @@ func _update_wave_segments() -> void:
         var glow := create_tween()
         glow.tween_property(now_segment, "modulate", Color.WHITE, 0.3)
 
-func set_wave_time(seconds: float, is_boss: bool) -> void:
+func set_wave_progress(remaining: int, total: int, is_boss: bool) -> void:
     if is_boss:
         timer_label.text = "首领战"
         timer_label.add_theme_color_override("font_color", UI.RED)
+    elif remaining <= 3 and remaining > 0:
+        timer_label.text = "剩余 %d / %d" % [remaining, total]
+        timer_label.add_theme_color_override("font_color", UI.BRASS_LIGHT)
     else:
-        timer_label.text = "剩余 %d 秒" % int(ceil(seconds))
+        timer_label.text = "剩余 %d / %d" % [remaining, total]
         timer_label.add_theme_color_override("font_color", UI.MUTED)
+
+func get_wave_remaining_text() -> String:
+    return timer_label.text
 
 func set_gold(value: int) -> void:
     if value == _last_gold:

@@ -1,10 +1,14 @@
 extends Control
 
 const UI := preload("res://scripts/ui_forge.gd")
+const RESPONSE_CURVE := 0.72
+const RESPONSE_GAIN := 1.18
+const EDGE_MARGIN := 16.0
 
-@export var base_radius := 100.0
-@export var knob_radius := 42.0
-@export var dead_zone := 0.12
+@export var base_radius := 90.0
+@export var knob_radius := 38.0
+@export var dead_zone := 0.06
+@export var anchor_center := Vector2(142.0, 578.0)
 
 var _vector := Vector2.ZERO
 var _active := false
@@ -13,23 +17,15 @@ var _center := Vector2.ZERO
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_STOP
-    resized.connect(_refresh_center)
-    _refresh_center()
-
-func _refresh_center() -> void:
-    _center = size * 0.5
+    _center = anchor_center
     queue_redraw()
 
 func _gui_input(event: InputEvent) -> void:
     if event is InputEventScreenTouch and event.pressed and not _active:
-        _active = true
-        _touch_index = event.index
-        _update_from_position(event.position)
+        _activate(event.index, event.position)
         accept_event()
     elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _active:
-        _active = true
-        _touch_index = -1
-        _update_from_position(event.position)
+        _activate(-1, event.position)
         accept_event()
 
 func _input(event: InputEvent) -> void:
@@ -49,24 +45,47 @@ func _input(event: InputEvent) -> void:
         _release()
         get_viewport().set_input_as_handled()
 
+func _activate(index: int, local_position: Vector2) -> void:
+    _active = true
+    _touch_index = index
+    _center = _clamp_center(local_position)
+    _update_from_position(local_position)
+    queue_redraw()
+
+func _clamp_center(local_position: Vector2) -> Vector2:
+    var view_size := get_viewport_rect().size
+    var margin := base_radius + EDGE_MARGIN
+    return Vector2(
+        clampf(local_position.x, margin, view_size.x - margin),
+        clampf(local_position.y, margin, view_size.y - margin)
+    )
+
 func _to_local(viewport_position: Vector2) -> Vector2:
     return get_global_transform_with_canvas().affine_inverse() * viewport_position
 
 func _update_from_position(local_position: Vector2) -> void:
-    var offset := local_position - _center
+    _vector = _vector_for_offset(local_position - _center)
+    queue_redraw()
+
+func _vector_for_offset(offset: Vector2) -> Vector2:
     var length := offset.length()
+    if length < 1.0:
+        return Vector2.ZERO
     if length > base_radius:
         offset = offset.normalized() * base_radius
-
-    _vector = offset / base_radius
-    if _vector.length() < dead_zone:
-        _vector = Vector2.ZERO
-    queue_redraw()
+        length = base_radius
+    var travel := length / base_radius
+    if travel <= dead_zone:
+        return Vector2.ZERO
+    var magnitude := (travel - dead_zone) / (1.0 - dead_zone)
+    magnitude = clampf(pow(magnitude, RESPONSE_CURVE) * RESPONSE_GAIN, 0.0, 1.0)
+    return offset.normalized() * magnitude
 
 func _release() -> void:
     _active = false
     _touch_index = -1
     _vector = Vector2.ZERO
+    _center = anchor_center
     queue_redraw()
 
 func get_vector() -> Vector2:
@@ -80,19 +99,18 @@ func release() -> void:
     _release()
 
 func _draw() -> void:
-    if _center == Vector2.ZERO:
-        _center = size * 0.5
-
-    draw_circle(_center, base_radius, Color(0.035, 0.085, 0.095, 0.74 if not _active else 0.86))
-    draw_arc(_center, base_radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.45 if not _active else 0.8), 1.5, true)
-    draw_arc(_center, base_radius - 7.0, 0.0, TAU, 64, Color(0.16, 0.32, 0.32, 0.42), 1.0, true)
+    var center := _center if _active else anchor_center
+    var alpha := 0.92 if _active else 0.62
+    draw_circle(center, base_radius, Color(0.035, 0.085, 0.095, alpha * 0.82))
+    draw_arc(center, base_radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.5 + alpha * 0.35), 1.5, true)
+    draw_arc(center, base_radius - 7.0, 0.0, TAU, 64, Color(0.16, 0.32, 0.32, 0.42), 1.0, true)
     for index in range(12):
         var angle := TAU * float(index) / 12.0
-        var inner := _center + Vector2.from_angle(angle) * (base_radius - 5.0)
-        var outer := _center + Vector2.from_angle(angle) * (base_radius - 12.0)
-        draw_line(inner, outer, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.35), 1.0, true)
+        var inner := center + Vector2.from_angle(angle) * (base_radius - 5.0)
+        var outer := center + Vector2.from_angle(angle) * (base_radius - 12.0)
+        draw_line(inner, outer, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.22 + alpha * 0.22), 1.0, true)
 
-    var knob_position := _center + _vector * base_radius
+    var knob_position := center + _vector * base_radius
     var knob_size := knob_radius * (1.06 if _active else 1.0)
     draw_circle(knob_position, knob_size + 3.0, Color(0.0, 0.0, 0.0, 0.28))
     draw_circle(knob_position, knob_size, Color(0.10, 0.42, 0.40, 0.92))
