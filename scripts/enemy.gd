@@ -1,74 +1,50 @@
-extends CharacterBody2D
-
-signal died(drop_position: Vector2, coin_count: int)
-
-@export var max_health := 30
-@export var move_speed := 110.0
-@export var contact_damage := 8
-@export var contact_interval := 0.8
-@export var contact_range := 36.0
-@export var coin_drop := 1
-@export var elite := false
-
-var health := 30
-var player = null
-var contact_cooldown := 0.0
-var active := true
-var damage_flash := 0.0
+extends "res://scripts/enemy_base.gd"
 
 func _ready() -> void:
-    health = max_health
-    add_to_group("enemies")
-    player = get_tree().get_first_node_in_group("player")
-    queue_redraw()
+    super._ready()
+    damage_number_color = Color("#fef3c7")
+    health_bar_color = Color("#fca5a5")
+    death_color = Color("#f87171")
 
 func _physics_process(delta: float) -> void:
-    if not active or player == null or not is_instance_valid(player):
-        return
-    if player.is_dead:
+    _tick_status(delta)
+    if not active or player == null or not is_instance_valid(player) or player.is_dead:
         return
 
     var offset: Vector2 = player.global_position - global_position
-    if offset.length() > 1.0:
-        velocity = offset.normalized() * move_speed
+    if is_stunned():
+        velocity = Vector2.ZERO
         move_and_slide()
+    elif offset.length() > 1.0:
+        velocity = offset.normalized() * move_speed * speed_multiplier()
+        move_and_slide()
+    else:
+        velocity = Vector2.ZERO
 
-    contact_cooldown = maxf(0.0, contact_cooldown - delta)
-    damage_flash = maxf(0.0, damage_flash - delta)
-
-    if offset.length() <= contact_range and contact_cooldown <= 0.0:
-        if player.has_method("take_damage"):
-            player.take_damage(contact_damage)
-            contact_cooldown = contact_interval
-
+    _try_contact_damage()
     queue_redraw()
-
-func take_damage(amount: int) -> void:
-    health -= amount
-    damage_flash = 0.12
-    Audio.play("hit", -16.0)
-    Fx.damage_number(global_position + Vector2(0.0, -26.0), amount, Color("#fef3c7"))
-    queue_redraw()
-    if health <= 0:
-        Audio.play("enemy_die", -10.0)
-        Fx.burst(global_position, Color("#f87171"), 8)
-        died.emit(global_position, coin_drop)
-        queue_free()
-
-func stop() -> void:
-    active = false
-    velocity = Vector2.ZERO
 
 func _draw() -> void:
     var body_color := Color("#f87171")
     if damage_flash > 0.0:
         body_color = Color.WHITE
 
-    draw_circle(Vector2.ZERO, 16.0, body_color)
-    draw_circle(Vector2.ZERO, 9.0, Color("#7f1d1d"))
-    if elite:
-        draw_arc(Vector2.ZERO, 23.0, 0.0, TAU, 40, Color("#fbbf24"), 2.5, true)
+    draw_set_transform(Vector2(0.0, 16.0), 0.0, Vector2(1.0, 0.4))
+    draw_circle(Vector2.ZERO, 18.0, Color(0.0, 0.0, 0.0, 0.28))
+    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-    var ratio: float = clampf(float(health) / float(max_health), 0.0, 1.0)
-    draw_rect(Rect2(-18.0, -28.0, 36.0, 5.0), Color(0.0, 0.0, 0.0, 0.65))
-    draw_rect(Rect2(-18.0, -28.0, 36.0 * ratio, 5.0), Color("#fca5a5"))
+    var step := sin(anim_time * 9.0) * 4.0
+    draw_line(Vector2(-9.0, 8.0), Vector2(-15.0 + step, 20.0), Color("#8f3a36"), 2.5, true)
+    draw_line(Vector2(9.0, 8.0), Vector2(15.0 - step, 20.0), Color("#8f3a36"), 2.5, true)
+    draw_line(Vector2(-6.0, 4.0), Vector2(-11.0 - step, 15.0), Color("#6f2a28"), 2.0, true)
+    draw_line(Vector2(6.0, 4.0), Vector2(11.0 + step, 15.0), Color("#6f2a28"), 2.0, true)
+
+    _draw_gear(Vector2.ZERO, 17.0, 8, Color(0.72, 0.30, 0.27, 0.9), anim_time * 1.5)
+    draw_circle(Vector2.ZERO, 12.5, body_color)
+    draw_circle(Vector2.ZERO, 8.0, Color("#7f1d1d"))
+    draw_circle(Vector2(0.0, -2.0), 3.2, Color("#fecaca"))
+    draw_circle(Vector2(0.0, -2.0), 1.4, Color("#450a0a"))
+    if elite:
+        draw_arc(Vector2.ZERO, 25.0, 0.0, TAU, 40, Color("#fbbf24"), 2.5, true)
+    _draw_status_marks()
+    _draw_health_bar()

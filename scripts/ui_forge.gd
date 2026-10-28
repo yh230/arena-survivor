@@ -14,6 +14,7 @@ const TEXT := Color("#eaf4f1")
 const MUTED := Color("#8fa8a6")
 const LINE := Color(0.847, 0.71, 0.42, 0.34)
 const DARK_LINE := Color(0.15, 0.23, 0.24, 1.0)
+const ICON_GLYPHS := ["炮", "刃", "链", "穿", "锤", "毒", "磁", "靴", "火", "猫", "砧", "翠"]
 const QUALITY_COLORS := [
     Color.WHITE,
     Color("#a8b3b0"),
@@ -153,6 +154,15 @@ static func make_seal(glyph: String, diameter: float, border: Color = BRASS) -> 
     seal.mouse_filter = Control.MOUSE_FILTER_IGNORE
     var style := panel_style(Color(0.06, 0.11, 0.12, 0.95), border, int(diameter * 0.5), 1)
     seal.add_theme_stylebox_override("panel", style)
+    if glyph in ICON_GLYPHS:
+        var icon := Control.new()
+        icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+        icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        icon.set_script(load("res://scripts/forge_glyph.gd"))
+        icon.set("text", glyph)
+        icon.set("tint", BRASS_LIGHT)
+        seal.add_child(icon)
+        return seal
     var text := label(glyph, int(diameter * 0.42), BRASS_LIGHT, true)
     text.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER

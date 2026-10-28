@@ -7,6 +7,8 @@ const QUALITY_NAMES := ["", "普通", "稀有", "史诗", "传说"]
 const QUALITY_DAMAGE := [0.0, 1.0, 1.35, 1.8, 2.4]
 const QUALITY_COOLDOWN := [0.0, 1.0, 0.92, 0.84, 0.76]
 const WEAPON_ORDER := ["peony", "maple", "justice", "vigil", "hammer", "elixir"]
+const CRIT_CHANCE := 0.12
+const CRIT_MULT := 1.8
 const WEAPON_DATA := {
     "peony": {"title": "牡丹炮台", "desc": "自动部署炮台", "legendary": "传说：炮台发射贯穿激光"},
     "maple": {"title": "枫叶环刃", "desc": "环绕飞刃", "legendary": "传说：环绕刃留下火焰轨迹"},
@@ -30,13 +32,14 @@ var weapon_qualities := {}
 var weapon_order: Array = []
 var item_qualities := {}
 var item_order: Array = []
+var wave_power := 1.0
 
 var turret_timer := 0.0
 var turrets: Array = []
 var orbiter_angle := 0.0
 var orbiter_tick := 0.0
 var orbiter_sfx_timer := 0.0
-var orbiter_global_position := Vector2.ZERO
+var orbiter_positions: Array[Vector2] = []
 var trail_timer := 0.0
 var fire_patches: Array = []
 var chain_timer := 0.0
@@ -72,11 +75,12 @@ func _update_turrets(delta: float) -> void:
     turret_timer -= delta
     if turret_timer <= 0.0:
         turret_timer = _turret_deploy_interval(quality)
-        if turrets.size() < 1:
+        if turrets.size() < _turret_cap(quality):
             turrets.append({
                 "pos": player.global_position + Vector2(0.0, 46.0),
                 "life": _turret_lifetime(quality),
                 "fire": 0.12,
+                "aim": Vector2.UP,
             })
 
     for index in range(turrets.size() - 1, -1, -1):
@@ -95,6 +99,7 @@ func _update_turrets(delta: float) -> void:
 func _turret_fire(turret: Dictionary, target, quality: int) -> void:
     var from: Vector2 = turret["pos"]
     var to: Vector2 = target.global_position
+    turret["aim"] = (to - from).normalized()
     var damage := _turret_damage(quality)
     if quality >= MAX_QUALITY:
         var direction := (to - from).normalized()
@@ -110,19 +115,28 @@ func _turret_fire(turret: Dictionary, target, quality: int) -> void:
 func _update_orbiter(delta: float) -> void:
     var quality := _q("maple")
     if quality <= 0:
+        orbiter_positions.clear()
         return
 
     orbiter_angle += _orbiter_speed(quality) * delta
-    orbiter_global_position = player.global_position + Vector2.from_angle(orbiter_angle) * _orbiter_radius(quality)
+    var blades := _orbiter_blade_count(quality)
+    orbiter_positions.clear()
+    for index in range(blades):
+        var angle := orbiter_angle + TAU * float(index) / float(blades)
+        orbiter_positions.append(player.global_position + Vector2.from_angle(angle) * _orbiter_radius(quality))
     orbiter_sfx_timer = maxf(0.0, orbiter_sfx_timer - delta)
 
     orbiter_tick -= delta
     if orbiter_tick <= 0.0:
         orbiter_tick = _orbiter_tick_interval(quality)
-        var hit_enemies: Array = _enemies_in_radius(orbiter_global_position, _orbiter_hit_radius(quality))
-        for enemy in hit_enemies:
-            _damage_enemy(enemy, _orbiter_damage(quality))
-        if not hit_enemies.is_empty() and orbiter_sfx_timer <= 0.0:
+        var hit_any := false
+        for blade_position in orbiter_positions:
+            var hit_enemies: Array = _enemies_in_radius(blade_position, _orbiter_hit_radius(quality))
+            for enemy in hit_enemies:
+                _damage_enemy(enemy, _orbiter_damage(quality))
+                _apply_knockback(enemy, 14.0)
+                hit_any = true
+        if hit_any and orbiter_sfx_timer <= 0.0:
             Audio.play("orbiter", -28.0)
             orbiter_sfx_timer = 0.8
 
@@ -130,11 +144,12 @@ func _update_orbiter(delta: float) -> void:
         trail_timer -= delta
         if trail_timer <= 0.0:
             trail_timer = 0.55
-            fire_patches.append({
-                "pos": orbiter_global_position,
-                "life": 2.6,
-                "tick": 0.15,
-            })
+            for blade_position in orbiter_positions:
+                fire_patches.append({
+                    "pos": blade_position,
+                    "life": 2.6,
+                    "tick": 0.15,
+                })
 
 func _update_chain(delta: float) -> void:
     var quality := _q("justice")
@@ -151,9 +166,11 @@ func _update_chain(delta: float) -> void:
 
     var targets := _chain_targets(first, quality)
     var points: Array = [player.global_position]
+    var slow_factor := 0.55 if quality >= MAX_QUALITY else 0.7
     for enemy in targets:
         points.append(enemy.global_position)
         _damage_enemy(enemy, _chain_damage(quality))
+        _apply_slow(enemy, 1.2, slow_factor)
     chain_points = points
     chain_life = 0.16
     Audio.play("chain", -20.0)
@@ -187,8 +204,10 @@ func _update_pierce(delta: float) -> void:
     if direction.length_squared() < 0.01:
         direction = Vector2.RIGHT
     var end := start + direction * _pierce_range(quality)
+    var mark_bonus := 0.25 if quality >= MAX_QUALITY else 0.15
     for enemy in _line_hits(start, end, _pierce_width(quality), _pierce_count(quality)):
         _damage_enemy(enemy, _pierce_damage(quality))
+        _apply_mark(enemy, 1.5, mark_bonus)
 
     var color := Color(0.55, 0.85, 1.0, 0.9)
     if quality >= MAX_QUALITY:
@@ -210,6 +229,8 @@ func _update_hammer(delta: float) -> void:
         damage = int(float(damage) * 1.5)
     for enemy in _enemies_in_radius(player.global_position, radius):
         _damage_enemy(enemy, damage)
+        _apply_knockback(enemy, 50.0)
+        _apply_stun(enemy, 0.4)
     hammer_effects.append({
         "pos": player.global_position,
         "life": 0.30,
@@ -278,6 +299,7 @@ func _update_effects(delta: float) -> void:
             field["tick"] = 0.5
             for enemy in _enemies_in_radius(field["pos"], field["radius"]):
                 _damage_enemy(enemy, field["damage"])
+                _apply_slow(enemy, 0.6, 0.7)
         if field["life"] <= 0.0:
             poison_fields.remove_at(index)
 
@@ -336,11 +358,53 @@ func _line_hits(start: Vector2, end: Vector2, width: float, limit: int) -> Array
         result.append(candidates[index]["enemy"])
     return result
 
-func _damage_enemy(enemy, amount: int) -> void:
+func _damage_enemy(enemy, base_damage: int) -> void:
     if enemy == null or not is_instance_valid(enemy):
         return
+    var is_crit := randf() < CRIT_CHANCE
+    var amount := int(round(float(base_damage) * wave_power * (CRIT_MULT if is_crit else 1.0)))
     if enemy.has_method("take_damage"):
-        enemy.take_damage(amount)
+        enemy.take_damage(amount, is_crit)
+
+func _apply_slow(enemy, duration: float, factor: float) -> void:
+    if enemy != null and is_instance_valid(enemy) and enemy.has_method("apply_slow"):
+        enemy.apply_slow(duration, factor)
+
+func _apply_stun(enemy, duration: float) -> void:
+    if enemy != null and is_instance_valid(enemy) and enemy.has_method("apply_stun"):
+        enemy.apply_stun(duration)
+
+func _apply_mark(enemy, duration: float, bonus: float) -> void:
+    if enemy != null and is_instance_valid(enemy) and enemy.has_method("apply_mark"):
+        enemy.apply_mark(duration, bonus)
+
+func _apply_knockback(enemy, distance: float) -> void:
+    if enemy == null or not is_instance_valid(enemy) or not enemy.has_method("apply_knockback"):
+        return
+    if player == null or not is_instance_valid(player):
+        return
+    enemy.apply_knockback(enemy.global_position - player.global_position, distance)
+
+func _power_for(wave_no: int, chapter_no: int) -> float:
+    return 1.0 + 0.05 * float(wave_no - 1) + 0.12 * float(chapter_no - 1)
+
+func set_wave_power(wave_no: int, chapter_no: int) -> void:
+    wave_power = _power_for(wave_no, chapter_no)
+
+func _damage_with_roll(base_damage: int, roll: float) -> int:
+    var multiplier := CRIT_MULT if roll < CRIT_CHANCE else 1.0
+    return int(round(float(base_damage) * wave_power * multiplier))
+
+func _orbiter_blade_count(quality: int) -> int:
+    var blades := 1
+    if quality >= 2:
+        blades += 1
+    if quality >= MAX_QUALITY:
+        blades += 1
+    return blades
+
+func _turret_cap(quality: int) -> int:
+    return 2 if quality >= 3 else 1
 
 func _draw() -> void:
     for beam in beams:
@@ -350,21 +414,34 @@ func _draw() -> void:
 
     for turret in turrets:
         var pos := to_local(turret["pos"])
+        var aim: Vector2 = turret.get("aim", Vector2.UP)
+        var quality := _q("peony")
         var body := Color("#67e8f9")
         if _legendary("peony"):
             body = Color("#f472b6")
-        draw_circle(pos, 15.0, Color(0.04, 0.16, 0.18, 0.9))
-        draw_rect(Rect2(pos - Vector2(10.0, 10.0), Vector2(20.0, 20.0)), body, true)
-        draw_line(pos, pos + Vector2(0.0, -22.0), body, 5.0, true)
+        var life_ratio := clampf(float(turret["life"]) / _turret_lifetime(quality), 0.0, 1.0)
+        draw_circle(pos + Vector2(0.0, 10.0), 14.0, Color(0.0, 0.0, 0.0, 0.24))
+        draw_circle(pos, 14.0, Color(0.04, 0.16, 0.18, 0.95))
+        draw_arc(pos, 15.0, -PI * 0.5, -PI * 0.5 + TAU * life_ratio, 32, Color(body.r, body.g, body.b, 0.55), 2.0, true)
+        for index in range(8):
+            var angle := TAU * float(index) / 8.0 + float(Time.get_ticks_msec()) * 0.001
+            draw_line(pos + Vector2.from_angle(angle) * 12.0, pos + Vector2.from_angle(angle) * 17.0, Color(0.85, 0.71, 0.42, 0.7), 2.0, true)
+        var barrel := pos + aim * 19.0
+        draw_line(pos, barrel, body, 7.0, true)
+        draw_line(pos, barrel, body.lightened(0.45), 2.0, true)
+        draw_circle(barrel, 4.5, body.lightened(0.35))
+        draw_circle(pos, 6.5, Color("#0d9488"))
+        draw_circle(pos, 3.0, Color("#ecfeff"))
 
-    if _q("maple") > 0:
-        var orbiter_pos := to_local(orbiter_global_position)
+    if _q("maple") > 0 and not orbiter_positions.is_empty():
         var orbiter_color := Color("#f97316") if _legendary("maple") else Color("#22d3ee")
         if _legendary("maple"):
             draw_arc(to_local(player.global_position), _orbiter_radius(MAX_QUALITY), 0.0, TAU, 64, Color(0.3, 0.9, 1.0, 0.25), 2.0, true)
-        draw_circle(orbiter_pos, 12.0, Color(0.03, 0.12, 0.16, 0.9))
-        draw_circle(orbiter_pos, 8.0, orbiter_color)
-        draw_circle(orbiter_pos, 3.0, Color("#ecfeff"))
+        for blade_position in orbiter_positions:
+            var orbiter_pos := to_local(blade_position)
+            draw_circle(orbiter_pos, 12.0, Color(0.03, 0.12, 0.16, 0.9))
+            draw_circle(orbiter_pos, 8.0, orbiter_color)
+            draw_circle(orbiter_pos, 3.0, Color("#ecfeff"))
 
     for patch in fire_patches:
         var patch_pos := to_local(patch["pos"])
@@ -464,6 +541,7 @@ func reset_build() -> void:
     poison_fields.clear()
     beams.clear()
     chain_points.clear()
+    orbiter_positions.clear()
 
 func get_weapon_types() -> Array:
     return WEAPON_ORDER.duplicate()

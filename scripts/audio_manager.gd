@@ -24,6 +24,7 @@ const POOL_SIZE := 12
 var _players: Array[AudioStreamPlayer] = []
 var _next_index := 0
 var _last_player: AudioStreamPlayer = null
+var _last_played_at := {}
 
 func _ready() -> void:
     for _index in range(POOL_SIZE):
@@ -40,6 +41,13 @@ func play(sound_name: String, volume_db := -8.0) -> void:
     player.volume_db = volume_db
     player.play()
     _last_player = player
+
+func play_limited(sound_name: String, volume_db := -8.0, min_interval := 0.07) -> void:
+    var now := float(Time.get_ticks_msec()) / 1000.0
+    if now - float(_last_played_at.get(sound_name, -100.0)) < min_interval:
+        return
+    _last_played_at[sound_name] = now
+    play(sound_name, volume_db)
 
 func has_sound(sound_name: String) -> bool:
     return SOUNDS.has(sound_name)

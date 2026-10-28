@@ -77,6 +77,7 @@ var max_unlocked := 0
 var endless_unlocked := false
 var best_endless_wave := 0
 var total_kills := 0
+var backdrop = null
 
 var shake_time := 0.0
 var shake_strength := 0.0
@@ -86,6 +87,11 @@ func _ready() -> void:
     if test_mode:
         save_path = TEST_SAVE_PATH
         DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+
+    backdrop = load("res://scripts/arena_backdrop.gd").new()
+    add_child(backdrop)
+    move_child(backdrop, 0)
+    backdrop.set_chapter(1)
 
     hud.stage_selected.connect(_on_stage_selected)
     hud.endless_selected.connect(_on_endless_selected)
@@ -186,6 +192,8 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     shop_open = false
     wave = 1
     gold = START_GOLD + (chapter - 1) * CHAPTER_START_GOLD
+    if backdrop != null:
+        backdrop.set_chapter(chapter)
     shop_offers.clear()
     shop_message = ""
     last_heal_amount = 0
@@ -208,6 +216,7 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     hud.hide_shop()
     hud.hide_end_panel()
     hud.set_stage(_stage_label())
+    hud.set_chapter_art(chapter)
     hud.set_best_wave(best_endless_wave)
     hud.set_gold(gold)
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
@@ -302,6 +311,7 @@ func _wave_heal_ratio(is_boss: bool) -> float:
 
 func _start_wave(number: int) -> void:
     wave = number
+    weapon_manager.set_wave_power(number, chapter)
     wave_active = true
     if is_endless and wave > best_endless_wave:
         best_endless_wave = wave
@@ -461,6 +471,8 @@ func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave 
         wave_killed = mini(wave_total, wave_killed + 1)
         wave_remaining = maxi(0, wave_total - wave_killed)
         hud.set_wave_progress(wave_remaining, wave_total, false)
+        if wave_remaining == 0:
+            hud.show_notice("清剿完毕")
     var base_value := _coin_value_for(wave)
     for index in range(coin_count):
         var coin = COIN_SCRIPT.new()
@@ -671,6 +683,7 @@ func _shop_data() -> Dictionary:
         "free_rerolls": shop_free_rerolls,
         "message": shop_message,
         "wave": wave,
+        "chapter": chapter,
     }
 
 func _on_buy_offer(index: int) -> void:
@@ -950,20 +963,6 @@ func _update_shake(delta: float) -> void:
     else:
         camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake_strength
 
-func _draw() -> void:
-    var view_size := get_viewport_rect().size
-    var grid_color := Color(0.10, 0.18, 0.20, 0.55)
-    var step := 80.0
-    var x := 0.0
-    while x <= view_size.x:
-        draw_line(Vector2(x, 0.0), Vector2(x, view_size.y), grid_color, 1.0)
-        x += step
-    var y := 0.0
-    while y <= view_size.y:
-        draw_line(Vector2(0.0, y), Vector2(view_size.x, y), grid_color, 1.0)
-        y += step
-    draw_rect(Rect2(20.0, 20.0, view_size.x - 40.0, view_size.y - 40.0), Color(0.15, 0.75, 0.70, 0.45), false, 3.0)
-
 func _capture_screenshot() -> void:
     await get_tree().create_timer(0.6).timeout
     max_unlocked = 1
@@ -1043,8 +1042,20 @@ func _capture_screenshot() -> void:
     await get_tree().create_timer(0.5).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_clear.png")
+
+    get_tree().paused = false
+    _begin_run("2-1", false)
+    await get_tree().create_timer(1.2).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_ch2_battle.png")
+
+    _begin_run("3-1", false)
+    await get_tree().create_timer(1.2).timeout
+    await RenderingServer.frame_post_draw
+    _save_screenshot("res://screenshots/m5_ch3_battle.png")
+
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
-    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_shop.png m5_treasure.png m5_elite.png m5_boss.png m5_clear.png")
+    print("SCREENSHOT_SAVED m5_stage_select.png m5_battle.png m5_shop.png m5_treasure.png m5_elite.png m5_boss.png m5_clear.png m5_ch2_battle.png m5_ch3_battle.png")
     get_tree().quit(0)
 
 func _save_screenshot(path: String) -> Error:
@@ -1071,6 +1082,10 @@ func _run_smoke_test() -> void:
     if wave_error != "":
         _fail_test(wave_error)
         return
+    var weapon_error := _check_weapon_rules()
+    if weapon_error != "":
+        _fail_test(weapon_error)
+        return
 
     _begin_run("1-1", false)
     await get_tree().process_frame
@@ -1096,6 +1111,15 @@ func _run_smoke_test() -> void:
     if absf(player.move_speed - 340.0) > 0.01:
         _fail_test("base move speed not tuned")
         return
+    if absf(player.attack_interval - 0.40) > 0.001:
+        _fail_test("base attack interval not tuned")
+        return
+    var projectile_probe = player.projectile_scene.instantiate()
+    if absf(projectile_probe.speed - 820.0) > 0.01:
+        _fail_test("base projectile speed not tuned")
+        projectile_probe.free()
+        return
+    projectile_probe.free()
 
     var joystick = get_tree().get_first_node_in_group("virtual_joystick")
     if joystick == null:
@@ -1179,6 +1203,34 @@ func _run_smoke_test() -> void:
     if gold <= gold_before_coin:
         _fail_test("coin pickup did not grant gold")
         return
+
+    var status_enemy = ENEMY_SCENE.instantiate()
+    if not status_enemy.has_method("apply_slow"):
+        _fail_test("enemy status helpers missing")
+        return
+    status_enemy.max_health = 500
+    status_enemy.coin_drop = 0
+    enemies.add_child(status_enemy)
+    status_enemy.global_position = Vector2(420.0, 520.0)
+    status_enemy.apply_slow(1.0, 0.7)
+    if not is_equal_approx(status_enemy.speed_multiplier(), 0.7):
+        _fail_test("enemy slow not applied")
+        return
+    status_enemy.apply_stun(0.4)
+    if not status_enemy.is_stunned():
+        _fail_test("enemy stun not applied")
+        return
+    status_enemy.apply_mark(1.0, 0.15)
+    if not is_equal_approx(status_enemy.damage_taken_multiplier(), 1.15):
+        _fail_test("enemy mark not applied")
+        return
+    var marked_health: int = status_enemy.health
+    status_enemy.take_damage(100)
+    if status_enemy.health != marked_health - 115:
+        _fail_test("enemy mark damage bonus wrong")
+        return
+    status_enemy.queue_free()
+    await get_tree().process_frame
 
     var shooter = SHOOTER_SCENE.instantiate()
     shooter.max_health = 500
@@ -1475,6 +1527,12 @@ func _run_smoke_test() -> void:
         return
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
     print("SMOKE_TEST_PASS input=%s stage_select=true shop=true merge=true coins=true enemies=true boss8=true stage_clear=true endless=true build=%s" % [input_mode, weapon_manager.get_build_signature()])
+    get_tree().paused = false
+    _clear_arena()
+    Fx.clear_effects()
+    await get_tree().create_timer(0.35).timeout
+    Fx.clear_effects()
+    await get_tree().process_frame
     get_tree().quit(0)
 
 func _check_balance_rules() -> String:
@@ -1528,6 +1586,31 @@ func _check_wave_rules() -> String:
         return "chapter quota scaling wrong"
     if _wave_enemy_count_for(1, 1, true) != 14:
         return "endless quota wrong"
+    return ""
+
+func _check_weapon_rules() -> String:
+    if not weapon_manager.has_method("_power_for"):
+        return "weapon power helper missing"
+    if not is_equal_approx(weapon_manager._power_for(1, 1), 1.0):
+        return "weapon power start wrong"
+    if not is_equal_approx(weapon_manager._power_for(16, 1), 1.75):
+        return "weapon power wave scaling wrong"
+    if not is_equal_approx(weapon_manager._power_for(1, 3), 1.24):
+        return "weapon power chapter scaling wrong"
+    if not weapon_manager.has_method("_damage_with_roll"):
+        return "weapon crit helper missing"
+    if weapon_manager._damage_with_roll(100, 0.05) != 180:
+        return "weapon crit damage wrong"
+    if weapon_manager._damage_with_roll(100, 0.9) != 100:
+        return "weapon base damage wrong"
+    if not weapon_manager.has_method("_orbiter_blade_count"):
+        return "orbiter blade helper missing"
+    if weapon_manager._orbiter_blade_count(1) != 1 or weapon_manager._orbiter_blade_count(2) != 2 or weapon_manager._orbiter_blade_count(4) != 3:
+        return "orbiter blade scaling wrong"
+    if not weapon_manager.has_method("_turret_cap"):
+        return "turret cap helper missing"
+    if weapon_manager._turret_cap(1) != 1 or weapon_manager._turret_cap(3) != 2:
+        return "turret cap scaling wrong"
     return ""
 
 func _test_finish_wave() -> void:

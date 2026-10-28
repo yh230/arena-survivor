@@ -117,3 +117,12 @@ func _draw() -> void:
     draw_circle(knob_position, knob_size * 0.72, Color(0.16, 0.78, 0.71, 0.95))
     draw_circle(knob_position, knob_size * 0.34, Color(0.86, 1.0, 1.0, 0.92))
     draw_arc(knob_position, knob_size, 0.0, TAU, 48, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.65), 1.2, true)
+    draw_string(
+        UI.regular_font(),
+        Vector2(center.x - base_radius, center.y + base_radius + 20.0),
+        "移动",
+        HORIZONTAL_ALIGNMENT_CENTER,
+        base_radius * 2.0,
+        10,
+        Color(0.56, 0.68, 0.66, 0.75)
+    )

@@ -8,7 +8,7 @@ const MAX_DAMAGE_LABELS := 36
 func shake(strength := 6.0, duration := 0.15) -> void:
     shake_requested.emit(strength, duration)
 
-func damage_number(global_position: Vector2, amount: int, color := Color.WHITE) -> void:
+func damage_number(global_position: Vector2, amount: int, color := Color.WHITE, font_size := 20) -> void:
     var scene = get_tree().current_scene
     if scene == null:
         return
@@ -17,7 +17,7 @@ func damage_number(global_position: Vector2, amount: int, color := Color.WHITE) 
 
     var label := Label.new()
     label.text = str(amount)
-    label.add_theme_font_size_override("font_size", 20)
+    label.add_theme_font_size_override("font_size", font_size)
     label.add_theme_color_override("font_color", color)
     label.mouse_filter = Control.MOUSE_FILTER_IGNORE
     label.position = global_position + Vector2(randf_range(-8.0, 8.0), -28.0)

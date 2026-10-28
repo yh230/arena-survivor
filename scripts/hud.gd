@@ -15,10 +15,16 @@ signal dash_requested
 const UI := preload("res://scripts/ui_forge.gd")
 const JOYSTICK_SCRIPT := preload("res://scripts/virtual_joystick.gd")
 const DASH_RING_SCRIPT := preload("res://scripts/dash_ring.gd")
+const BG_ART_PATHS := [
+    "res://assets/art/bg_ch1.jpg",
+    "res://assets/art/bg_ch2.jpg",
+    "res://assets/art/bg_ch3.jpg",
+]
 const STAGE_COUNT := 12
 const DASH_COOLDOWN := 2.5
 
 var root: Control
+var _bg_art: Array = []
 var combat_ui: Control
 var stats_panel: Panel
 var health_label: Label
@@ -48,6 +54,7 @@ var dash_sub: Label
 
 var stage_panel: Control
 var stage_content: Control
+var stage_art: TextureRect
 var stage_buttons: Dictionary = {}
 var stage_cards: Dictionary = {}
 var stage_progress_cells: Array = []
@@ -60,6 +67,7 @@ var endless_state: Label
 
 var shop_panel: Control
 var shop_content: Control
+var shop_art: TextureRect
 var shop_offer_buttons: Array = []
 var shop_offer_uis: Array = []
 var shop_weapon_buttons: Array = []
@@ -76,6 +84,7 @@ var shop_weapon_count: Label
 var shop_item_count: Label
 
 var end_panel: Control
+var end_art: TextureRect
 var end_box: VBoxContainer
 var end_title: Label
 var end_sub: Label
@@ -119,6 +128,9 @@ func _ready() -> void:
     root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
     root.theme = UI.make_theme()
     add_child(root)
+
+    for path in BG_ART_PATHS:
+        _bg_art.append(load(path))
 
     _build_combat_ui()
     _build_inputs()
@@ -278,6 +290,12 @@ func _build_stats_panel() -> void:
     hp_flash.color = Color(1.0, 1.0, 1.0, 0.0)
     hp_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
     hp_bar.add_child(hp_flash)
+    var hp_ticks := Control.new()
+    hp_ticks.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+    hp_ticks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    hp_ticks.set_script(load("res://scripts/bar_ticks.gd"))
+    hp_ticks.set("segments", 10)
+    hp_bar.add_child(hp_ticks)
     box.add_child(hp_bar)
 
     var stage_row := HBoxContainer.new()
@@ -363,7 +381,7 @@ func _build_wave_track() -> void:
 
 func _build_boss_bar() -> void:
     boss_bar = Panel.new()
-    boss_bar.position = Vector2(380.0, 84.0)
+    boss_bar.position = Vector2(380.0, 94.0)
     boss_bar.size = Vector2(520.0, 50.0)
     boss_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
     UI.apply_panel(boss_bar, Color(0.12, 0.055, 0.055, 0.97), Color(0.55, 0.22, 0.19, 0.8), 6, 1)
@@ -418,7 +436,7 @@ func _build_weapon_bar() -> void:
         var seal := UI.make_seal("刃", 30.0)
         seal.position = Vector2(8.0, 14.0)
         slot.add_child(seal)
-        var seal_label := seal.get_child(0) as Label
+        var seal_label := seal.get_child(0)
 
         var name_label := UI.label("枫叶环刃", 12, UI.TEXT, true)
         name_label.position = Vector2(44.0, 9.0)
@@ -472,7 +490,7 @@ func _build_item_bar() -> void:
         var seal := UI.make_seal("磁", 22.0)
         seal.position = Vector2(6.0, 8.0)
         slot.add_child(seal)
-        var seal_label := seal.get_child(0) as Label
+        var seal_label := seal.get_child(0)
 
         var name_label := UI.label("磁铁", 10, UI.TEXT, true)
         name_label.position = Vector2(32.0, 3.0)
@@ -649,14 +667,15 @@ func _update_wave_segments() -> void:
         glow.tween_property(now_segment, "modulate", Color.WHITE, 0.3)
 
 func set_wave_progress(remaining: int, total: int, is_boss: bool) -> void:
+    var text := "首领战" if is_boss else "剩余 %d / %d" % [remaining, total]
+    if timer_label.text == text:
+        return
+    timer_label.text = text
     if is_boss:
-        timer_label.text = "首领战"
         timer_label.add_theme_color_override("font_color", UI.RED)
     elif remaining <= 3 and remaining > 0:
-        timer_label.text = "剩余 %d / %d" % [remaining, total]
         timer_label.add_theme_color_override("font_color", UI.BRASS_LIGHT)
     else:
-        timer_label.text = "剩余 %d / %d" % [remaining, total]
         timer_label.add_theme_color_override("font_color", UI.MUTED)
 
 func get_wave_remaining_text() -> String:
@@ -717,7 +736,7 @@ func set_weapon_slots(slots: Array) -> void:
         var panel: Panel = ui["panel"]
         var accent: ColorRect = ui["accent"]
         var seal: Panel = ui["seal"]
-        var seal_label: Label = ui["seal_label"]
+        var seal_label = ui["seal_label"]
         var name_label: Label = ui["name"]
         var quality_label: Label = ui["quality"]
         var empty_label: Label = ui["empty"]
@@ -761,7 +780,7 @@ func set_item_slots(slots: Array) -> void:
         var panel: Panel = ui["panel"]
         var accent: ColorRect = ui["accent"]
         var seal: Panel = ui["seal"]
-        var seal_label: Label = ui["seal_label"]
+        var seal_label = ui["seal_label"]
         var name_label: Label = ui["name"]
         var quality_label: Label = ui["quality"]
         var empty_label: Label = ui["empty"]
@@ -832,9 +851,18 @@ func _build_stage_select() -> void:
     stage_panel.visible = false
     root.add_child(stage_panel)
 
+    stage_art = TextureRect.new()
+    _full_rect(stage_art)
+    stage_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    stage_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    stage_art.texture = _bg_art[0]
+    stage_art.modulate = Color(0.66, 0.70, 0.72, 1.0)
+    stage_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    stage_panel.add_child(stage_art)
+
     var backdrop := ColorRect.new()
     _full_rect(backdrop)
-    backdrop.color = Color(0.02, 0.03, 0.04, 0.97)
+    backdrop.color = Color(0.02, 0.03, 0.04, 0.70)
     backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
     stage_panel.add_child(backdrop)
 
@@ -1026,6 +1054,8 @@ func show_stage_select(data: Dictionary) -> void:
     var current_index := int(data.get("current_index", -1))
     var cleared_count := int(data.get("cleared_count", 0))
     _current_stage_id = ""
+    var art_chapter := 3 if current_index < 0 else int(current_index / 4) + 1
+    set_chapter_art(art_chapter)
 
     stage_progress_label.text = "%d / %d" % [cleared_count, STAGE_COUNT]
     for index in range(stage_progress_cells.size()):
@@ -1164,6 +1194,12 @@ func _apply_stage_card_style(button: Button, current: bool, cleared: bool, locke
     button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.04, 0.09, 0.10, 0.98), border, 7, 1))
     button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.03, 0.06, 0.07, 0.72), Color(0.10, 0.15, 0.16, 0.9), 7, 1))
 
+func set_chapter_art(chapter: int) -> void:
+    var index := clampi(chapter, 1, _bg_art.size()) - 1
+    stage_art.texture = _bg_art[index]
+    shop_art.texture = _bg_art[index]
+    end_art.texture = _bg_art[index]
+
 func hide_stage_select() -> void:
     if _stage_card_tween != null and _stage_card_tween.is_valid():
         _stage_card_tween.kill()
@@ -1195,9 +1231,18 @@ func _build_shop() -> void:
     shop_panel.visible = false
     root.add_child(shop_panel)
 
+    shop_art = TextureRect.new()
+    _full_rect(shop_art)
+    shop_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    shop_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    shop_art.texture = _bg_art[0]
+    shop_art.modulate = Color(0.60, 0.64, 0.66, 1.0)
+    shop_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    shop_panel.add_child(shop_art)
+
     var backdrop := ColorRect.new()
     _full_rect(backdrop)
-    backdrop.color = Color(0.02, 0.03, 0.04, 0.97)
+    backdrop.color = Color(0.02, 0.03, 0.04, 0.74)
     backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
     shop_panel.add_child(backdrop)
 
@@ -1264,6 +1309,14 @@ func _build_shop() -> void:
         card.pressed.connect(_on_offer_pressed.bind(index))
         offers_grid.add_child(card)
 
+        var art := TextureRect.new()
+        art.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+        art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+        art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+        art.modulate = Color(1.0, 1.0, 1.0, 0.38)
+        art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+        card.add_child(art)
+
         var accent := ColorRect.new()
         accent.position = Vector2.ZERO
         accent.size = Vector2(300.0, 3.0)
@@ -1282,7 +1335,7 @@ func _build_shop() -> void:
         var seal := UI.make_seal("刃", 52.0)
         seal.position = Vector2(14.0, 42.0)
         card.add_child(seal)
-        var seal_label := seal.get_child(0) as Label
+        var seal_label := seal.get_child(0)
         var name_label := UI.label("", 17, UI.TEXT, true)
         name_label.position = Vector2(78.0, 40.0)
         name_label.size = Vector2(208.0, 24.0)
@@ -1306,6 +1359,7 @@ func _build_shop() -> void:
         shop_offer_buttons.append(card)
         shop_offer_uis.append({
             "button": card,
+            "art": art,
             "accent": accent,
             "quality": quality,
             "price": price,
@@ -1423,7 +1477,7 @@ func _build_sell_slot(kind: String, index: int) -> Dictionary:
     var seal := UI.make_seal("刃", 26.0 if is_weapon else 22.0)
     seal.position = Vector2(8.0, 8.0)
     button.add_child(seal)
-    var seal_label := seal.get_child(0) as Label
+    var seal_label := seal.get_child(0)
     var name_label := UI.label("空", 11 if is_weapon else 10, UI.TEXT, true)
     name_label.position = Vector2(40.0 if is_weapon else 36.0, 5.0)
     name_label.size = Vector2(118.0 if is_weapon else 122.0, 16.0)
@@ -1454,6 +1508,7 @@ func show_shop(data: Dictionary) -> void:
     stage_panel.visible = false
     end_panel.visible = false
     shop_panel.visible = true
+    set_chapter_art(int(data.get("chapter", 1)))
     _animate_offers = true
     _shop_last_gold = -1
     _shop_last_health = -1
@@ -1502,10 +1557,11 @@ func refresh_shop(data: Dictionary) -> void:
         var qcolor: Color = offer.get("quality_color", UI.quality_color(quality))
         var is_weapon := str(offer.get("kind", "weapon")) == "weapon"
         var accent: ColorRect = ui["accent"]
+        var art: TextureRect = ui["art"]
         var quality_label: Label = ui["quality"]
         var price_label: Label = ui["price"]
         var seal: Panel = ui["seal"]
-        var seal_label: Label = ui["seal_label"]
+        var seal_label = ui["seal_label"]
         var name_label: Label = ui["name"]
         var desc_label: Label = ui["desc"]
         var badge: PanelContainer = ui["badge"]
@@ -1515,6 +1571,9 @@ func refresh_shop(data: Dictionary) -> void:
         var owned := int(offer.get("owned", 0))
 
         accent.color = qcolor
+        var art_path := "res://assets/art/cards/%s.jpg" % str(offer.get("id", ""))
+        art.texture = load(art_path) if ResourceLoader.exists(art_path) else null
+        art.visible = art.texture != null
         quality_label.text = "%s · %s" % [str(offer.get("quality_name", "")), "武器" if is_weapon else "道具"]
         quality_label.add_theme_color_override("font_color", qcolor)
         price_label.text = "%d 金币" % int(offer.get("price", 0))
@@ -1643,7 +1702,7 @@ func _refresh_sell_slots(uis: Array, slots: Array, kind: String) -> void:
         var button: Button = ui["button"]
         var accent: ColorRect = ui["accent"]
         var seal: Panel = ui["seal"]
-        var seal_label: Label = ui["seal_label"]
+        var seal_label = ui["seal_label"]
         var name_label: Label = ui["name"]
         var quality_label: Label = ui["quality"]
         var sell_label: Label = ui["sell"]
@@ -1737,6 +1796,20 @@ func _build_end_panel() -> void:
     backdrop.color = Color(0.02, 0.03, 0.04, 0.985)
     backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
     end_panel.add_child(backdrop)
+
+    end_art = TextureRect.new()
+    _full_rect(end_art)
+    end_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+    end_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+    end_art.texture = _bg_art[0]
+    end_art.modulate = Color(0.74, 0.76, 0.78, 1.0)
+    end_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    end_panel.add_child(end_art)
+    var end_shade := ColorRect.new()
+    _full_rect(end_shade)
+    end_shade.color = Color(0.02, 0.03, 0.04, 0.66)
+    end_shade.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    end_panel.add_child(end_shade)
 
     var center := CenterContainer.new()
     _full_rect(center)

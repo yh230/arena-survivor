@@ -1,8 +1,9 @@
 extends Area2D
 
 var direction := Vector2.RIGHT
-var speed := 700.0
+var speed := 820.0
 var damage := 10
+var crit := false
 var lifetime := 0.95
 var hit := false
 var source = null
@@ -22,7 +23,7 @@ func _on_body_entered(body: Node) -> void:
         return
     if body.is_in_group("enemies") and body.has_method("take_damage"):
         hit = true
-        body.take_damage(damage)
+        body.take_damage(damage, crit)
         if is_instance_valid(source) and source.has_method("on_projectile_hit"):
             source.on_projectile_hit()
         queue_free()

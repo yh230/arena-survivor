@@ -1,32 +1,29 @@
-extends CharacterBody2D
+extends "res://scripts/enemy_base.gd"
 
-signal died(drop_position: Vector2, coin_count: int)
-
-@export var max_health := 50
-@export var move_speed := 85.0
 @export var lifetime := 20.0
 
-var health := 50
-var player = null
 var wander_direction := Vector2.RIGHT
 var wander_timer := 0.0
-var damage_flash := 0.0
 var pulse := 0.0
-var active := true
 
 func _ready() -> void:
-    health = max_health
-    add_to_group("enemies")
+    super._ready()
     add_to_group("treasure")
-    player = get_tree().get_first_node_in_group("player")
+    coin_drop = 6
+    contact_range = 0.0
+    damage_number_color = Color("#fde68a")
+    health_bar_color = Color("#fde68a")
+    death_color = Color("#fbbf24")
+    death_burst = 18
+    die_sound_db = -6.0
     wander_direction = Vector2.from_angle(randf_range(0.0, TAU))
     wander_timer = randf_range(0.4, 1.0)
-    queue_redraw()
 
 func _physics_process(delta: float) -> void:
     if not active:
         return
 
+    _tick_status(delta)
     lifetime -= delta
     if lifetime <= 0.0:
         _escape()
@@ -43,10 +40,13 @@ func _physics_process(delta: float) -> void:
         if away.length() < 220.0 and away.length() > 1.0:
             wander_direction = away.normalized()
 
-    velocity = wander_direction * move_speed
-    move_and_slide()
-    _clamp_to_arena()
-    damage_flash = maxf(0.0, damage_flash - delta)
+    if is_stunned():
+        velocity = Vector2.ZERO
+        move_and_slide()
+    else:
+        velocity = wander_direction * move_speed * speed_multiplier()
+        move_and_slide()
+        _clamp_to_arena()
     queue_redraw()
 
 func _clamp_to_arena() -> void:
@@ -54,21 +54,6 @@ func _clamp_to_arena() -> void:
     var margin := 50.0
     global_position.x = clampf(global_position.x, margin, view_size.x - margin)
     global_position.y = clampf(global_position.y, margin, view_size.y - margin)
-
-func take_damage(amount: int) -> void:
-    if not active:
-        return
-    health -= amount
-    damage_flash = 0.12
-    Audio.play("hit", -14.0)
-    Fx.damage_number(global_position + Vector2(0.0, -30.0), amount, Color("#fde68a"))
-    queue_redraw()
-    if health <= 0:
-        active = false
-        Audio.play("enemy_die", -6.0)
-        Fx.burst(global_position, Color("#fbbf24"), 18)
-        died.emit(global_position, 6)
-        queue_free()
 
 func _escape() -> void:
     active = false
@@ -80,14 +65,42 @@ func _draw() -> void:
     if damage_flash > 0.0:
         body = Color.WHITE
 
-    draw_circle(Vector2.ZERO, 22.0, Color(0.2, 0.14, 0.02, 0.55))
-    draw_circle(Vector2.ZERO, 15.0, body)
+    var bob := sin(pulse * 3.0) * 2.0
+    draw_set_transform(Vector2(0.0, 20.0), 0.0, Vector2(1.0, 0.4))
+    draw_circle(Vector2.ZERO, 18.0, Color(0.0, 0.0, 0.0, 0.25))
+    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+    var aura := 0.5 + 0.5 * sin(pulse * 4.0)
+    draw_circle(Vector2(0.0, bob), 24.0 + aura * 3.0, Color(1.0, 0.85, 0.3, 0.10 + aura * 0.06))
+    draw_arc(Vector2(0.0, bob), 24.0 + aura * 3.0, 0.0, TAU, 32, Color(1.0, 0.9, 0.3, 0.35 + aura * 0.3), 2.0, true)
+
+    var flap := sin(pulse * 9.0) * 4.0
+    draw_colored_polygon(
+        PackedVector2Array([
+            Vector2(-12.0, bob),
+            Vector2(-27.0, bob - 10.0 - flap),
+            Vector2(-22.0, bob + 4.0),
+        ]),
+        Color(1.0, 0.92, 0.55, 0.55)
+    )
+    draw_colored_polygon(
+        PackedVector2Array([
+            Vector2(12.0, bob),
+            Vector2(27.0, bob - 10.0 - flap),
+            Vector2(22.0, bob + 4.0),
+        ]),
+        Color(1.0, 0.92, 0.55, 0.55)
+    )
+
+    draw_set_transform(Vector2(0.0, bob), 0.0, Vector2.ONE)
+    _draw_gear(Vector2.ZERO, 17.0, 8, Color(0.85, 0.68, 0.25, 0.8), anim_time * 0.8)
+    draw_circle(Vector2.ZERO, 14.0, body)
     draw_circle(Vector2.ZERO, 9.0, Color("#fef3c7"))
     draw_circle(Vector2(-5.0, -3.0), 2.5, Color("#78350f"))
     draw_circle(Vector2(5.0, -3.0), 2.5, Color("#78350f"))
-    var aura := 0.5 + 0.5 * sin(pulse * 4.0)
-    draw_arc(Vector2.ZERO, 24.0 + aura * 3.0, 0.0, TAU, 32, Color(1.0, 0.9, 0.3, 0.35 + aura * 0.3), 2.0, true)
+    draw_line(Vector2(0.0, -14.0), Vector2(0.0, -20.0), Color("#d8b56b"), 2.0, true)
+    draw_circle(Vector2(0.0, -21.0), 2.5, Color("#f1d99b"))
+    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-    var ratio: float = clampf(float(health) / float(max_health), 0.0, 1.0)
-    draw_rect(Rect2(-18.0, -32.0, 36.0, 4.0), Color(0.0, 0.0, 0.0, 0.6))
-    draw_rect(Rect2(-18.0, -32.0, 36.0 * ratio, 4.0), Color("#fde68a"))
+    _draw_status_marks()
+    _draw_health_bar(36.0, -32.0)
