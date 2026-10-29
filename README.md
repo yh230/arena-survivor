@@ -46,7 +46,8 @@ godot --headless --path . --export-debug "Android" build/arena-survivor.apk
 
 ```
 scripts/          全部逻辑（GDScript，UI 由代码构建，无 .tscn 界面）
-  main.gd         关卡流程、波次、经济、商店、测试入口
+  main.gd         测试/截图入口（继承 main_game.gd）
+  main_game.gd    关卡流程、波次、经济、商店
   weapon_manager.gd  六台机关的输出与绘制
   hud.gd          战斗 HUD / 选关 / 商店 / 结算四个界面
   hitstop.gd      打击停顿（Engine.time_scale，测试模式自禁用）
