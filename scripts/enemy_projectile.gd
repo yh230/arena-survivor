@@ -23,11 +23,21 @@ func _physics_process(delta: float) -> void:
         queue_free()
 
 func _on_body_entered(body: Node) -> void:
-    if body.is_in_group("player") and body.has_method("take_damage"):
+    if not body.is_in_group("player"):
+        return
+    var health_before := int(body.health) if "health" in body else 0
+    if body.has_method("take_damage_from"):
+        body.take_damage_from(damage, global_position)
+    elif body.has_method("take_damage"):
         body.take_damage(damage)
-        Fx.ring(global_position, Color(0.8, 0.45, 1.0), 22.0, 0.22, 2.0)
-        Fx.sparks(global_position, Color(0.8, 0.45, 1.0), 5, 160.0, 0.24)
-        queue_free()
+    var dealt := health_before - int(body.health)
+    if dealt > 0:
+        var scene := get_tree().current_scene
+        if scene != null and scene.has_method("_record_damage_taken"):
+            scene._record_damage_taken(dealt, "shooter")
+    Fx.ring(global_position, Color(0.8, 0.45, 1.0), 22.0, 0.22, 2.0)
+    Fx.sparks(global_position, Color(0.8, 0.45, 1.0), 5, 160.0, 0.24)
+    queue_free()
 
 func _draw() -> void:
     draw_circle(Vector2.ZERO, 7.0, Color("#a855f7"))

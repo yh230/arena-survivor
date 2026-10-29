@@ -103,7 +103,7 @@ func _draw() -> void:
     var alpha := 0.92 if _active else 0.62
     draw_circle(center, base_radius, Color(0.035, 0.085, 0.095, alpha * 0.82))
     draw_arc(center, base_radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.5 + alpha * 0.35), 1.5, true)
-    draw_arc(center, base_radius - 7.0, 0.0, TAU, 64, Color(0.16, 0.32, 0.32, 0.42), 1.0, true)
+    draw_arc(center, base_radius - 7.0, 0.0, TAU, 64, Color(0.20, 0.32, 0.30, 0.42), 1.0, true)
     for index in range(12):
         var angle := TAU * float(index) / 12.0
         var inner := center + Vector2.from_angle(angle) * (base_radius - 5.0)
@@ -113,9 +113,9 @@ func _draw() -> void:
     var knob_position := center + _vector * base_radius
     var knob_size := knob_radius * (1.06 if _active else 1.0)
     draw_circle(knob_position, knob_size + 3.0, Color(0.0, 0.0, 0.0, 0.28))
-    draw_circle(knob_position, knob_size, Color(0.10, 0.42, 0.40, 0.92))
-    draw_circle(knob_position, knob_size * 0.72, Color(0.16, 0.78, 0.71, 0.95))
-    draw_circle(knob_position, knob_size * 0.34, Color(0.86, 1.0, 1.0, 0.92))
+    draw_circle(knob_position, knob_size, Color(0.14, 0.34, 0.28, 0.92))
+    draw_circle(knob_position, knob_size * 0.72, Color(0.35, 0.62, 0.48, 0.95))
+    draw_circle(knob_position, knob_size * 0.34, Color(0.86, 0.94, 0.82, 0.92))
     draw_arc(knob_position, knob_size, 0.0, TAU, 48, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.65), 1.2, true)
     draw_string(
         UI.regular_font(),
@@ -124,5 +124,5 @@ func _draw() -> void:
         HORIZONTAL_ALIGNMENT_CENTER,
         base_radius * 2.0,
         10,
-        Color(0.56, 0.68, 0.66, 0.75)
+        Color(0.58, 0.64, 0.60, 0.75)
     )

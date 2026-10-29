@@ -52,6 +52,7 @@ var skill_button: Button
 var skill_ring: Control
 var skill_title: Label
 var skill_sub: Label
+var debug_invuln_label: Label = null
 
 var stage_panel: Control
 var stage_content: Control
@@ -103,6 +104,7 @@ var _display_gold := 0
 var _hp_flash_tween: Tween
 var _low_hp_tween: Tween
 var _last_health := 100
+var _hp_low := -1
 var _wave_banner_tween: Tween
 var _notice_tween: Tween
 var _panel_tweens: Dictionary = {}
@@ -111,6 +113,8 @@ var _stage_current_tween: Tween
 var _current_stage_id := ""
 var _last_track_wave := -1
 var _skill_was_ready := true
+var _skill_ratio := -1.0
+var _skill_tick := -2
 var _hero_level := 1
 var _hero_xp := 0
 var _hero_xp_to_next := 1
@@ -123,6 +127,7 @@ var _shop_last_health := -1
 var _last_weapon_qualities := {}
 var _last_item_qualities := {}
 var _enemy_count := 0
+var _enemy_count_ready := false
 var _best_wave := 0
 var _current_wave := 1
 var _wave_total := 16
@@ -173,7 +178,7 @@ func _make_portrait(path: String, size: float, glow := Color(0.0, 0.0, 0.0, 0.0)
     frame.custom_minimum_size = Vector2(size, size)
     frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
     frame.add_theme_stylebox_override("panel", UI.panel_style(
-        Color(0.025, 0.07, 0.08, 1.0),
+        Color(0.039, 0.078, 0.094, 1.0),
         Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.7),
         5, 1
     ))
@@ -232,7 +237,7 @@ func _pulse_control(node: Control, amount := 1.06, duration := 0.18) -> void:
     tween.tween_property(node, "scale", Vector2.ONE, duration).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 
 func _float_combat_text(text: String, color: Color, anchor: Vector2, size := 14) -> void:
-    var node := UI.outlined(UI.label(text, size, color, true), Color(0.01, 0.02, 0.03, 0.9), 3)
+    var node := UI.outlined(UI.label(text, size, color, true), Color(0.039, 0.078, 0.094, 0.9), 3)
     node.position = anchor
     combat_ui.add_child(node)
     var tween := create_tween().set_parallel(true)
@@ -252,8 +257,18 @@ func show_notice(text: String) -> void:
     _notice_tween.tween_interval(0.85)
     _notice_tween.tween_property(notice_label, "modulate:a", 0.0, 0.3)
 
+func set_debug_invuln(active: bool) -> void:
+    if debug_invuln_label == null:
+        if combat_ui == null:
+            return
+        debug_invuln_label = UI.outlined(UI.label("无敌", 13, Color("#ffd28a"), true), Color(0.039, 0.078, 0.094, 0.9), 3)
+        debug_invuln_label.position = Vector2(24.0, 206.0)
+        debug_invuln_label.size = Vector2(72.0, 22.0)
+        combat_ui.add_child(debug_invuln_label)
+    debug_invuln_label.visible = active
+
 func show_heal_feedback(amount: int) -> void:
-    _flash_health(Color(0.35, 1.0, 0.65, 0.34))
+    _flash_health(Color(0.302, 0.655, 0.455, 0.34))
     _float_combat_text("+%d" % amount, Color("#8affc1"), health_label.global_position + Vector2(96.0, -6.0), 14)
 
 # ---------------------------------------------------------------------------
@@ -276,15 +291,15 @@ func _build_combat_ui() -> void:
     tip_backdrop.position = Vector2(850.0, 22.0)
     tip_backdrop.size = Vector2(406.0, 26.0)
     tip_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    UI.apply_panel(tip_backdrop, Color(0.03, 0.07, 0.08, 0.82), Color(0.15, 0.25, 0.25, 0.5), 4, 1)
+    UI.apply_panel(tip_backdrop, Color(0.041, 0.082, 0.094, 0.82), Color(0.196, 0.275, 0.267, 0.5), 4, 1)
     combat_ui.add_child(tip_backdrop)
-    tip_label = UI.outlined(UI.label("拖动摇杆移动 · 点按震雷", 13, UI.MUTED), Color(0.01, 0.02, 0.03, 0.8), 3)
+    tip_label = UI.outlined(UI.label("拖动摇杆移动 · 点按震雷", 13, UI.MUTED), Color(0.039, 0.078, 0.094, 0.8), 3)
     tip_label.position = Vector2(850.0, 22.0)
     tip_label.size = Vector2(406.0, 26.0)
     tip_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
     combat_ui.add_child(tip_label)
 
-    wave_banner = UI.outlined(UI.label("", 30, UI.BRASS_LIGHT, true), Color(0.01, 0.02, 0.03, 0.9), 5)
+    wave_banner = UI.outlined(UI.label("", 30, UI.BRASS_LIGHT, true), Color(0.039, 0.078, 0.094, 0.9), 5)
     wave_banner.position = Vector2(0.0, 188.0)
     wave_banner.size = Vector2(1280.0, 44.0)
     wave_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -292,7 +307,7 @@ func _build_combat_ui() -> void:
     wave_banner.modulate.a = 0.0
     combat_ui.add_child(wave_banner)
 
-    notice_label = UI.outlined(UI.label("", 18, Color("#ffe4a3"), true), Color(0.01, 0.02, 0.03, 0.9), 4)
+    notice_label = UI.outlined(UI.label("", 18, Color("#ffe4a3"), true), Color(0.039, 0.078, 0.094, 0.9), 4)
     notice_label.position = Vector2(0.0, 246.0)
     notice_label.size = Vector2(1280.0, 30.0)
     notice_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -305,7 +320,7 @@ func _build_stats_panel() -> void:
     stats_panel.position = Vector2(24.0, 24.0)
     stats_panel.size = Vector2(330.0, 176.0)
     stats_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    UI.apply_panel(stats_panel, Color(0.045, 0.10, 0.11, 0.94), UI.LINE, 8, 1)
+    UI.apply_panel(stats_panel, Color(0.110, 0.188, 0.220, 0.94), UI.LINE, 8, 1)
     combat_ui.add_child(stats_panel)
 
     var box := _content_box(stats_panel, 13, 5)
@@ -315,7 +330,7 @@ func _build_stats_panel() -> void:
     top_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
     box.add_child(top_row)
 
-    top_row.add_child(_make_portrait("res://assets/sprites/player.png", 52.0, Color(0.4, 1.0, 0.9, 0.22)))
+    top_row.add_child(_make_portrait("res://assets/sprites/player.png", 52.0, Color(0.353, 0.675, 0.525, 0.22)))
 
     var hp_column := VBoxContainer.new()
     hp_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -344,7 +359,7 @@ func _build_stats_panel() -> void:
     hp_bar.value = 120.0
     hp_bar.show_percentage = false
     hp_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    hp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.02, 0.05, 0.06, 1.0), Color(0.13, 0.25, 0.26, 1.0), 7, 1))
+    hp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.045, 0.086, 0.102, 1.0), Color(0.149, 0.275, 0.235, 1.0), 7, 1))
     hp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.TEAL, UI.TEAL, 7, 0))
     hp_flash = ColorRect.new()
     hp_flash.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -366,7 +381,7 @@ func _build_stats_panel() -> void:
     xp_bar.value = 0.0
     xp_bar.show_percentage = false
     xp_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    xp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.02, 0.05, 0.06, 1.0), Color(0.13, 0.25, 0.26, 0.8), 2, 0))
+    xp_bar.add_theme_stylebox_override("background", UI.panel_style(Color(0.045, 0.086, 0.102, 1.0), Color(0.149, 0.275, 0.235, 0.8), 2, 0))
     xp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.BRASS_LIGHT, UI.BRASS_LIGHT, 2, 0))
     hp_column.add_child(xp_bar)
 
@@ -376,7 +391,7 @@ func _build_stats_panel() -> void:
     var tag_panel := Panel.new()
     tag_panel.custom_minimum_size = Vector2(54.0, 22.0)
     tag_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    tag_panel.add_theme_stylebox_override("panel", UI.panel_style(Color(0.10, 0.17, 0.12, 0.55), Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.5), 3, 1))
+    tag_panel.add_theme_stylebox_override("panel", UI.panel_style(Color(0.150, 0.250, 0.180, 0.55), Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.5), 3, 1))
     stage_tag_label = UI.label("第一章", 10, UI.BRASS_LIGHT, true)
     _full_rect(stage_tag_label)
     stage_tag_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -415,7 +430,7 @@ func _build_wave_track() -> void:
     wave_backdrop.position = Vector2(470.0, 24.0)
     wave_backdrop.size = Vector2(340.0, 58.0)
     wave_backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    UI.apply_panel(wave_backdrop, Color(0.04, 0.09, 0.10, 0.97), UI.LINE, 6, 1)
+    UI.apply_panel(wave_backdrop, Color(0.098, 0.169, 0.196, 0.97), UI.LINE, 6, 1)
     combat_ui.add_child(wave_backdrop)
     UI.add_corners(wave_backdrop)
 
@@ -456,7 +471,7 @@ func _build_boss_bar() -> void:
     boss_bar.position = Vector2(380.0, 94.0)
     boss_bar.size = Vector2(520.0, 50.0)
     boss_bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    UI.apply_panel(boss_bar, Color(0.12, 0.055, 0.055, 0.97), Color(0.55, 0.22, 0.19, 0.8), 6, 1)
+    UI.apply_panel(boss_bar, Color(0.140, 0.055, 0.045, 0.97), Color(0.502, 0.212, 0.180, 0.8), 6, 1)
     boss_bar.visible = false
     combat_ui.add_child(boss_bar)
 
@@ -491,7 +506,7 @@ func _build_boss_bar() -> void:
     boss_bar_value.value = 100.0
     boss_bar_value.show_percentage = false
     boss_bar_value.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    boss_bar_value.add_theme_stylebox_override("background", UI.panel_style(Color(0.08, 0.025, 0.025, 1.0), Color(0.38, 0.12, 0.10, 1.0), 7, 1))
+    boss_bar_value.add_theme_stylebox_override("background", UI.panel_style(Color(0.100, 0.032, 0.026, 1.0), Color(0.341, 0.118, 0.098, 1.0), 7, 1))
     boss_bar_value.add_theme_stylebox_override("fill", UI.panel_style(UI.RED, Color("#ff9a8f"), 7, 0))
     column.add_child(boss_bar_value)
     UI.add_corners(boss_bar, Color("#c76b5f"))
@@ -508,7 +523,7 @@ func _build_weapon_bar() -> void:
         slot.position = Vector2(float(index) * 112.0, 0.0)
         slot.size = Vector2(104.0, 64.0)
         slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        UI.apply_panel(slot, Color(0.045, 0.10, 0.11, 0.94), UI.DARK_LINE, 6, 1)
+        UI.apply_panel(slot, Color(0.110, 0.188, 0.220, 0.94), UI.DARK_LINE, 6, 1)
         bar.add_child(slot)
 
         var accent := ColorRect.new()
@@ -551,7 +566,7 @@ func _build_weapon_bar() -> void:
         var base_line := ColorRect.new()
         base_line.position = Vector2(2.0, 61.0)
         base_line.size = Vector2(100.0, 1.0)
-        base_line.color = Color(0.85, 0.71, 0.42, 0.16)
+        base_line.color = Color(0.788, 0.635, 0.153, 0.16)
         base_line.mouse_filter = Control.MOUSE_FILTER_IGNORE
         slot.add_child(base_line)
 
@@ -578,7 +593,7 @@ func _build_item_bar() -> void:
         slot.position = Vector2(float(index) * 92.0, 0.0)
         slot.size = Vector2(86.0, 38.0)
         slot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        UI.apply_panel(slot, Color(0.04, 0.09, 0.10, 0.9), UI.DARK_LINE, 5, 1)
+        UI.apply_panel(slot, Color(0.098, 0.169, 0.196, 0.9), UI.DARK_LINE, 5, 1)
         bar.add_child(slot)
 
         var accent := ColorRect.new()
@@ -593,7 +608,7 @@ func _build_item_bar() -> void:
         slot.add_child(seal)
         var seal_label := seal.get_child(0)
 
-        var name_label := UI.label("磁铁", 10, UI.TEXT, true)
+        var name_label := UI.label("引金石", 10, UI.TEXT, true)
         name_label.position = Vector2(32.0, 3.0)
         name_label.size = Vector2(50.0, 14.0)
         name_label.clip_text = true
@@ -676,11 +691,15 @@ func set_health(current: int, maximum: int) -> void:
     hp_bar.max_value = maximum
     hp_bar.value = current
     var low := maximum > 0 and float(current) / float(maximum) <= 0.3
-    hp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.RED if low else UI.TEAL, Color("#ff9a8f") if low else UI.TEAL, 7, 0))
+    # 性能：原每次受伤都新建 StyleBoxFlat 并让主题失效，现仅在「是否低血」翻转时换样式
+    var low_flag := 1 if low else 0
+    if low_flag != _hp_low:
+        _hp_low = low_flag
+        hp_bar.add_theme_stylebox_override("fill", UI.panel_style(UI.RED if low else UI.TEAL, Color("#ff9a8f") if low else UI.TEAL, 7, 0))
     if current < previous:
         _flash_health(Color(1.0, 0.22, 0.18, 0.36))
     elif current > previous:
-        _flash_health(Color(0.30, 1.0, 0.62, 0.30))
+        _flash_health(Color(0.263, 0.620, 0.420, 0.30))
     _update_low_health_pulse(low)
 
 func _flash_health(color: Color) -> void:
@@ -807,7 +826,11 @@ func _set_gold_text(value: float) -> void:
     gold_label.text = "金币 %d" % int(round(value))
 
 func set_enemy_count(count: int) -> void:
+    # 性能：本函数被 main._process 每帧调用，而 _update_sub_label() 会做一次字符串格式化。
+    if count == _enemy_count and _enemy_count_ready:
+        return
     _enemy_count = count
+    _enemy_count_ready = true
     _update_sub_label()
 
 func set_best_wave(value: int) -> void:
@@ -834,18 +857,26 @@ func get_hero_level_text() -> String:
     return level_label.text
 
 func set_skill_state(ready: bool, remaining: float, total: float) -> void:
+    # 性能：本函数被 main._process 每帧调用。原实现每帧都做一次主题覆盖 + 字符串格式化
+    # + skill_ring.queue_redraw()（其 _draw 含 4×64 段弧）。改为按 1% / 0.1 秒量化。
     var ready_changed := ready != _skill_was_ready
-    _skill_was_ready = ready
-    skill_button.disabled = not ready
     var ratio := 1.0
     if not ready:
         ratio = 1.0 - clampf(remaining / maxf(total, 0.01), 0.0, 1.0)
-    skill_ring.set("ratio", ratio)
-    skill_ring.queue_redraw()
-    skill_title.add_theme_color_override("font_color", UI.TEXT if ready else UI.MUTED)
-    skill_sub.text = "就绪" if ready else "%.1f 秒" % maxf(remaining, 0.0)
-    if ready and ready_changed:
-        _pulse_control(skill_ring, 1.06, 0.22)
+    if absf(ratio - _skill_ratio) > 0.01:
+        _skill_ratio = ratio
+        skill_ring.set("ratio", ratio)
+        skill_ring.queue_redraw()
+    if ready_changed:
+        _skill_was_ready = ready
+        skill_button.disabled = not ready
+        skill_title.add_theme_color_override("font_color", UI.TEXT if ready else UI.MUTED)
+        if ready:
+            _pulse_control(skill_ring, 1.06, 0.22)
+    var tick := 0 if ready else int(maxf(remaining, 0.0) * 10.0)
+    if tick != _skill_tick:
+        _skill_tick = tick
+        skill_sub.text = "就绪" if ready else "%.1f 秒" % maxf(remaining, 0.0)
 
 func set_weapon_slots(slots: Array) -> void:
     for index in range(weapon_slots.size()):
@@ -866,7 +897,7 @@ func set_weapon_slots(slots: Array) -> void:
             quality_label.visible = false
             empty_label.visible = true
             slot_badge.visible = false
-            UI.apply_panel(panel, Color(0.035, 0.075, 0.085, 0.86), Color(0.16, 0.24, 0.25, 0.95), 6, 1)
+            UI.apply_panel(panel, Color(0.045, 0.086, 0.102, 0.86), Color(0.176, 0.259, 0.271, 0.95), 6, 1)
             continue
 
         var slot: Dictionary = slots[index]
@@ -877,7 +908,7 @@ func set_weapon_slots(slots: Array) -> void:
         accent.color = color
         seal.visible = true
         seal_label.text = UI.seal_glyph(weapon_id)
-        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.06, 0.11, 0.12, 0.95), color, 15, 1))
+        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.118, 0.188, 0.212, 0.95), color, 15, 1))
         name_label.text = str(slot.get("title", weapon_id))
         name_label.visible = true
         name_label.add_theme_color_override("font_color", UI.TEXT)
@@ -892,7 +923,7 @@ func set_weapon_slots(slots: Array) -> void:
         slot_badge.text = "%d号" % (slot_index + 1) if slot_index >= 0 else ""
         slot_badge.add_theme_color_override("font_color", Color(color.r, color.g, color.b, 0.85))
         slot_badge.visible = slot_index >= 0
-        UI.apply_panel(panel, Color(0.045, 0.10, 0.11, 0.94), UI.DARK_LINE, 6, 1)
+        UI.apply_panel(panel, Color(0.110, 0.188, 0.220, 0.94), UI.DARK_LINE, 6, 1)
         if quality > old_quality and old_quality > 0:
             _flash_panel(panel)
         _last_weapon_qualities[weapon_id] = quality
@@ -914,7 +945,7 @@ func set_item_slots(slots: Array) -> void:
             name_label.visible = false
             quality_label.visible = false
             empty_label.visible = true
-            UI.apply_panel(panel, Color(0.035, 0.075, 0.085, 0.82), Color(0.15, 0.22, 0.23, 0.9), 5, 1)
+            UI.apply_panel(panel, Color(0.045, 0.086, 0.102, 0.82), Color(0.176, 0.259, 0.271, 0.9), 5, 1)
             continue
 
         var slot: Dictionary = slots[index]
@@ -925,14 +956,14 @@ func set_item_slots(slots: Array) -> void:
         accent.color = color
         seal.visible = true
         seal_label.text = UI.seal_glyph(item_id)
-        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.06, 0.11, 0.12, 0.95), color, 11, 1))
+        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.118, 0.188, 0.212, 0.95), color, 11, 1))
         name_label.text = str(slot.get("title", item_id))
         name_label.visible = true
         quality_label.text = UI.quality_name(quality)
         quality_label.visible = true
         quality_label.add_theme_color_override("font_color", color)
         empty_label.visible = false
-        UI.apply_panel(panel, Color(0.04, 0.09, 0.10, 0.9), UI.DARK_LINE, 5, 1)
+        UI.apply_panel(panel, Color(0.098, 0.169, 0.196, 0.9), UI.DARK_LINE, 5, 1)
         if quality > old_quality and old_quality > 0:
             _flash_panel(panel)
         _last_item_qualities[item_id] = quality
@@ -979,7 +1010,7 @@ func _build_stage_select() -> void:
     stage_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     stage_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     stage_art.texture = _bg_art[0]
-    stage_art.modulate = Color(0.66, 0.70, 0.72, 1.0)
+    stage_art.modulate = Color(0.60, 0.70, 0.65, 1.0)
     stage_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
     stage_panel.add_child(stage_art)
 
@@ -1100,7 +1131,7 @@ func _build_stage_select() -> void:
             pips.mouse_filter = Control.MOUSE_FILTER_IGNORE
             var pip_labels: Array = []
             for _pip in range(3):
-                var pip := UI.label("◆", 9, Color(0.2, 0.3, 0.31))
+                var pip := UI.label("◆", 9, Color(0.235, 0.310, 0.322))
                 pips.add_child(pip)
                 pip_labels.append(pip)
             card.add_child(pips)
@@ -1110,7 +1141,7 @@ func _build_stage_select() -> void:
             seal.size = Vector2(28.0, 28.0)
             seal.position = Vector2(228.0, 8.0)
             seal.mouse_filter = Control.MOUSE_FILTER_IGNORE
-            seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.10, 0.03, 0.03, 0.55), Color(0.88, 0.35, 0.31), 3, 1))
+            seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.120, 0.040, 0.030, 0.55), Color(0.784, 0.290, 0.235), 3, 1))
             var seal_text := UI.label("通", 11, Color("#f29a91"), true)
             _full_rect(seal_text)
             seal_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1230,7 +1261,7 @@ func show_stage_select(data: Dictionary) -> void:
         var pip_count := clampi(chapter_no + (1 if stage_no >= 2 else 0), 1, 3)
         for pip_index in range(pips.size()):
             var pip: Label = pips[pip_index]
-            pip.add_theme_color_override("font_color", UI.BRASS if pip_index < pip_count else Color(0.2, 0.3, 0.31))
+            pip.add_theme_color_override("font_color", UI.BRASS if pip_index < pip_count else Color(0.235, 0.310, 0.322))
 
         _apply_stage_card_style(button, current, cleared, locked)
         button.modulate = Color(1.0, 1.0, 1.0, 1.0) if not locked else Color(1.0, 1.0, 1.0, 0.52)
@@ -1304,18 +1335,18 @@ func _animate_stage_cards() -> void:
 
 func _apply_stage_card_style(button: Button, current: bool, cleared: bool, locked: bool) -> void:
     var border := UI.DARK_LINE
-    var bg := Color(0.05, 0.11, 0.12, 0.94)
+    var bg := Color(0.110, 0.196, 0.216, 0.94)
     if current:
         border = UI.TEAL
     elif cleared:
         border = UI.BRASS
     elif locked:
-        border = Color(0.10, 0.15, 0.16, 0.9)
-        bg = Color(0.03, 0.06, 0.07, 0.72)
+        border = Color(0.137, 0.196, 0.220, 0.9)
+        bg = Color(0.059, 0.098, 0.114, 0.72)
     button.add_theme_stylebox_override("normal", UI.panel_style(bg, border, 7, 1))
-    button.add_theme_stylebox_override("hover", UI.panel_style(Color(0.08, 0.18, 0.19, 0.96), border.lightened(0.12), 7, 1))
-    button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.04, 0.09, 0.10, 0.98), border, 7, 1))
-    button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.03, 0.06, 0.07, 0.72), Color(0.10, 0.15, 0.16, 0.9), 7, 1))
+    button.add_theme_stylebox_override("hover", UI.panel_style(Color(0.098, 0.169, 0.196, 0.96), border.lightened(0.12), 7, 1))
+    button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.098, 0.169, 0.196, 0.98), border, 7, 1))
+    button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.059, 0.098, 0.114, 0.72), Color(0.137, 0.196, 0.220, 0.9), 7, 1))
 
 func set_chapter_art(chapter: int) -> void:
     var index := clampi(chapter, 1, _bg_art.size()) - 1
@@ -1359,7 +1390,7 @@ func _build_shop() -> void:
     shop_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     shop_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     shop_art.texture = _bg_art[0]
-    shop_art.modulate = Color(0.60, 0.64, 0.66, 1.0)
+    shop_art.modulate = Color(0.54, 0.64, 0.59, 1.0)
     shop_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
     shop_panel.add_child(shop_art)
 
@@ -1498,7 +1529,7 @@ func _build_shop() -> void:
     build_panel.position = Vector2(648.0, 128.0)
     build_panel.size = Vector2(536.0, 390.0)
     build_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    UI.apply_panel(build_panel, Color(0.04, 0.09, 0.10, 0.9), UI.LINE, 7, 1)
+    UI.apply_panel(build_panel, Color(0.098, 0.169, 0.196, 0.9), UI.LINE, 7, 1)
     content.add_child(build_panel)
 
     var build_box := _content_box(build_panel, 12, 6)
@@ -1655,7 +1686,7 @@ func refresh_shop(data: Dictionary) -> void:
     shop_health_label.add_theme_color_override("font_color", UI.RED if low_health else UI.MUTED)
     var heal_amount := int(data.get("heal_amount", 0))
     if heal_amount > 0:
-        shop_health_label.modulate = Color(0.65, 1.35, 0.85, 1.0)
+        shop_health_label.modulate = Color(0.55, 1.15, 0.75, 1.0)
         var heal_tween := create_tween()
         heal_tween.tween_property(shop_health_label, "modulate", Color.WHITE, 0.45)
     if _shop_last_health >= 0 and health != _shop_last_health:
@@ -1701,7 +1732,7 @@ func refresh_shop(data: Dictionary) -> void:
         quality_label.add_theme_color_override("font_color", qcolor)
         price_label.text = "%d 金币" % int(offer.get("price", 0))
         seal_label.text = UI.seal_glyph(str(offer.get("id", "")))
-        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.06, 0.11, 0.12, 0.95), qcolor, 26, 1))
+        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.118, 0.188, 0.212, 0.95), qcolor, 26, 1))
         name_label.text = str(offer.get("title", offer.get("id", "")))
         var desc_text := str(offer.get("desc", ""))
         var legendary_text := str(offer.get("legendary_desc", ""))
@@ -1812,12 +1843,12 @@ func _on_reroll_pressed() -> void:
     reroll_shop.emit()
 
 func _apply_offer_card_style(button: Button, color: Color, disabled: bool) -> void:
-    var bg := Color(0.05, 0.11, 0.12, 0.95)
+    var bg := Color(0.110, 0.196, 0.216, 0.95)
     var border := Color(color.r, color.g, color.b, 0.38)
     button.add_theme_stylebox_override("normal", UI.panel_style(bg, border, 7, 1))
-    button.add_theme_stylebox_override("hover", UI.panel_style(Color(0.08, 0.18, 0.19, 0.97), color, 7, 1))
-    button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.04, 0.09, 0.10, 0.98), color, 7, 1))
-    button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.035, 0.07, 0.08, 0.82), Color(0.12, 0.18, 0.19, 0.8), 7, 1))
+    button.add_theme_stylebox_override("hover", UI.panel_style(Color(0.098, 0.169, 0.196, 0.97), color, 7, 1))
+    button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.098, 0.169, 0.196, 0.98), color, 7, 1))
+    button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.045, 0.082, 0.098, 0.82), Color(0.149, 0.220, 0.235, 0.8), 7, 1))
 
 func _refresh_sell_slots(uis: Array, slots: Array, kind: String) -> void:
     for index in range(uis.size()):
@@ -1852,7 +1883,7 @@ func _refresh_sell_slots(uis: Array, slots: Array, kind: String) -> void:
         accent.color = color
         seal.visible = true
         seal_label.text = UI.seal_glyph(slot_id)
-        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.06, 0.11, 0.12, 0.95), color, 13, 1))
+        seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.118, 0.188, 0.212, 0.95), color, 13, 1))
         name_label.text = str(slot.get("title", slot_id))
         name_label.add_theme_color_override("font_color", UI.TEXT)
         var slot_name := str(slot.get("slot_name", ""))
@@ -1866,12 +1897,12 @@ func _refresh_sell_slots(uis: Array, slots: Array, kind: String) -> void:
         _apply_sell_style(button, color, true)
 
 func _apply_sell_style(button: Button, color: Color, filled: bool) -> void:
-    var bg := Color(0.05, 0.11, 0.12, 0.94)
-    var border := Color(color.r, color.g, color.b, 0.45) if filled else Color(0.12, 0.18, 0.19, 0.8)
+    var bg := Color(0.110, 0.196, 0.216, 0.94)
+    var border := Color(color.r, color.g, color.b, 0.45) if filled else Color(0.149, 0.220, 0.235, 0.8)
     button.add_theme_stylebox_override("normal", UI.panel_style(bg, border, 5, 1))
-    button.add_theme_stylebox_override("hover", UI.panel_style(Color(0.08, 0.17, 0.18, 0.96), color if filled else border, 5, 1))
-    button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.04, 0.09, 0.10, 0.98), border, 5, 1))
-    button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.03, 0.06, 0.07, 0.7), Color(0.10, 0.15, 0.16, 0.8), 5, 1))
+    button.add_theme_stylebox_override("hover", UI.panel_style(Color(0.098, 0.169, 0.196, 0.96), color if filled else border, 5, 1))
+    button.add_theme_stylebox_override("pressed", UI.panel_style(Color(0.098, 0.169, 0.196, 0.98), border, 5, 1))
+    button.add_theme_stylebox_override("disabled", UI.panel_style(Color(0.059, 0.098, 0.114, 0.7), Color(0.137, 0.196, 0.220, 0.8), 5, 1))
 
 func hide_shop() -> void:
     shop_panel.visible = false
@@ -1929,7 +1960,7 @@ func _build_end_panel() -> void:
     end_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
     end_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
     end_art.texture = _bg_art[0]
-    end_art.modulate = Color(0.74, 0.76, 0.78, 1.0)
+    end_art.modulate = Color(0.741, 0.729, 0.690, 1.0)
     end_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
     end_panel.add_child(end_art)
     var end_shade := ColorRect.new()
@@ -1966,7 +1997,7 @@ func _build_end_panel() -> void:
     end_seal = Panel.new()
     end_seal.custom_minimum_size = Vector2(76.0, 76.0)
     end_seal.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    end_seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.10, 0.03, 0.03, 0.8), Color(0.88, 0.35, 0.31), 5, 2))
+    end_seal.add_theme_stylebox_override("panel", UI.panel_style(Color(0.120, 0.040, 0.030, 0.8), Color(0.784, 0.290, 0.235), 5, 2))
     var seal_label := UI.label("通\n关", 22, Color("#f29a91"), true)
     _full_rect(seal_label)
     seal_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -2089,7 +2120,7 @@ func _build_end_stats(stats: String) -> void:
         var card := Panel.new()
         card.custom_minimum_size = Vector2(232.0, 78.0)
         card.mouse_filter = Control.MOUSE_FILTER_IGNORE
-        UI.apply_panel(card, Color(0.05, 0.11, 0.12, 0.92), Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.3), 6, 1)
+        UI.apply_panel(card, Color(0.110, 0.196, 0.216, 0.92), Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.3), 6, 1)
         var margin := _margin(10)
         card.add_child(margin)
         var color := UI.TEAL if index == 0 else (UI.BRASS_LIGHT if index == 1 else UI.TEXT)

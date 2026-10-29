@@ -73,6 +73,8 @@ func setup_bolt(path: PackedVector2Array, col: Color, time := 0.2, w := 3.0) -> 
     queue_redraw()
 
 func _scatter(count: int, spread: float) -> void:
+    # 修正：原实现从不清空 _sparks，只靠节点销毁兜底，一旦复用节点（对象池）粒子会跨次累积。
+    _sparks.clear()
     for _index in range(maxi(0, count)):
         var direction := Vector2.from_angle(randf() * TAU)
         _sparks.append({

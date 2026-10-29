@@ -5,7 +5,6 @@ const GLOW_PX := 128
 
 static var _glow_texture: ImageTexture
 static var _additive: CanvasItemMaterial
-static var _flash_shader: Shader
 
 static func glow_texture() -> ImageTexture:
     if _glow_texture == null:
@@ -26,13 +25,31 @@ static func additive_material() -> CanvasItemMaterial:
         _additive.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD
     return _additive
 
-static func flash_material() -> ShaderMaterial:
-    if _flash_shader == null:
-        _flash_shader = load("res://shaders/sprite_flash.gdshader")
-    var material := ShaderMaterial.new()
-    material.shader = _flash_shader
-    material.set_shader_parameter("flash", 0.0)
-    return material
+## 性能：替代逐实例 ShaderMaterial 的闪光叠层。
+## 逐实例 ShaderMaterial 会让每个敌人都成为唯一材质 → Compatibility 下必然断批，
+## 且每帧 set_shader_parameter 也是纯浪费。这里改用「共享 additive 材质 + 同纹理叠层」：
+## 所有叠层共用 ArtFX.additive_material() 与同一张纹理，可合批；不闪时 visible=false 完全不参与绘制。
+static func add_flash_overlay(art: Sprite2D, texture: Texture2D) -> Sprite2D:
+    var sprite := Sprite2D.new()
+    sprite.texture = texture
+    sprite.material = additive_material()
+    sprite.z_index = 0
+    sprite.z_as_relative = true
+    sprite.modulate = Color(1.0, 1.0, 1.0, 0.0)
+    sprite.visible = false
+    art.add_child(sprite)
+    return sprite
+
+## 驱动叠层闪光；alpha <= 0 时彻底隐藏，避免每帧提交一个透明 quad。
+static func drive_flash_overlay(overlay: Sprite2D, strength: float, peak := 0.75) -> void:
+    if overlay == null:
+        return
+    if strength > 0.001:
+        overlay.visible = true
+        overlay.modulate.a = clampf(strength, 0.0, 1.0) * peak
+    elif overlay.visible:
+        overlay.modulate.a = 0.0
+        overlay.visible = false
 
 static func add_glow(parent: Node2D, color: Color, radius: float, intensity: float, depth := 0) -> Sprite2D:
     var sprite := Sprite2D.new()

@@ -1,7 +1,7 @@
 extends Control
 
 @export var segments := 10
-@export var color := Color(0.02, 0.06, 0.07, 0.35)
+@export var color := Color(0.039, 0.078, 0.094, 0.35)
 
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE

@@ -1,0 +1,38 @@
+{
+  "3": {
+    "pattern": "two_sides",
+    "edges": ["left", "right"],
+    "weights": {"chaser": 80, "shooter": 20, "exploder": 0}
+  },
+  "5": {
+    "pattern": "one_side",
+    "weights": {"chaser": 60, "shooter": 30, "exploder": 10}
+  },
+  "7": {
+    "pattern": "one_side",
+    "burst": 2,
+    "weights": {"chaser": 15, "shooter": 15, "exploder": 70}
+  },
+  "9": {
+    "pattern": "ring",
+    "weights": {"chaser": 85, "shooter": 10, "exploder": 5}
+  },
+  "11": {
+    "pattern": "two_sides",
+    "diagonal": true,
+    "weights": {"chaser": 50, "shooter": 50, "exploder": 0},
+    "sides": [
+      {"chaser": 0, "shooter": 100, "exploder": 0},
+      {"chaser": 100, "shooter": 0, "exploder": 0}
+    ]
+  },
+  "13": {
+    "pattern": "two_sides",
+    "edges": ["left", "right"],
+    "weights": {"chaser": 20, "shooter": 0, "exploder": 80}
+  },
+  "15": {
+    "pattern": "cone",
+    "weights": {"chaser": 34, "shooter": 33, "exploder": 33}
+  }
+}

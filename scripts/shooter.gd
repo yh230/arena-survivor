@@ -5,6 +5,10 @@ extends "res://scripts/enemy_base.gd"
 @export var projectile_damage := 6
 @export var projectile_scene: PackedScene
 
+# 性能：与 enemy.gd 同策略，避免每物理帧重绘静态的_状态环与血条
+var _was_status_visual := false
+var _was_windup := false
+
 var fire_cooldown := 1.0
 var windup := 0.0
 var strafe_sign := 1.0
@@ -17,7 +21,10 @@ func _ready() -> void:
     contact_range = 32.0
     damage_number_color = Color("#e9d5ff")
     health_bar_color = Color("#e9d5ff")
-    death_color = Color("#c084fc")
+    death_color = Color("#8a6fa8")
+
+func _damage_source_name() -> String:
+    return "shooter"
 
 func _art_texture_path() -> String:
     return "res://assets/sprites/shooter.png"
@@ -88,7 +95,14 @@ func _physics_process(delta: float) -> void:
             windup = 0.35
 
     _try_contact_damage()
-    queue_redraw()
+    # 性能：只有蓄力环在动；状态环与血条是静态的（血量变化由 take_damage 内重绘兜底）。
+    # _was_windup 必须参与判定：windup 归零那一帧蓄力环已被上一帧画上，不再重绘就会残留。
+    var status_visual := _mark_time > 0.0 or has_slow() or is_stunned()
+    var windup_active := windup > 0.0
+    if windup_active or _was_windup or status_visual or _was_status_visual:
+        queue_redraw()
+    _was_windup = windup_active
+    _was_status_visual = status_visual
 
 func _shoot(direction: Vector2) -> void:
     if projectile_scene == null:

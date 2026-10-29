@@ -20,7 +20,7 @@ var text := "":
         text = value
         queue_redraw()
 
-var tint := Color("#f1d99b"):
+var tint := Color("#ecd689"):
     set(value):
         tint = value
         queue_redraw()

@@ -87,8 +87,14 @@ func _explode() -> void:
     exploding = true
     if player != null and is_instance_valid(player):
         if global_position.distance_to(player.global_position) <= explosion_radius:
-            if player.has_method("take_damage"):
+            var health_before := int(player.health)
+            if player.has_method("take_damage_from"):
+                player.take_damage_from(explosion_damage, global_position)
+            elif player.has_method("take_damage"):
                 player.take_damage(explosion_damage)
+            var dealt := health_before - int(player.health)
+            if dealt > 0:
+                _report_player_damage(dealt, "exploder")
     Audio.play("explode", -4.0)
     Fx.burst(global_position, Color("#fb923c"), 16)
     Fx.ring(global_position, Color("#fb923c"), explosion_radius, 0.38, 5.0)

@@ -9,11 +9,12 @@ const EMPLACEMENTS := [
     Vector2(497.0, 258.0),
     Vector2(640.0, 175.0),
 ]
-const EMPLACEMENT_NAMES := ["东北台", "东南台", "南台", "西南台", "西北台", "北台"]
+const EMPLACEMENT_NAMES := ["艮位", "巽位", "离位", "坤位", "乾位", "坎位"]
 const WEAPON_DAMAGE_SCALE := 1.15
 const OVERCLOCK_MULT := 1.30
 const MAX_WEAPON_SLOTS := 6
 const MAX_ITEM_SLOTS := 6
+const MAX_POISON_FIELDS := 3
 const MAX_QUALITY := 4
 const QUALITY_NAMES := ["", "普通", "稀有", "史诗", "传说"]
 const QUALITY_DAMAGE := [0.0, 1.0, 1.35, 1.8, 2.4]
@@ -31,11 +32,11 @@ const WEAPON_DATA := {
 }
 const ITEM_ORDER := ["magnet", "boots", "holy_fire", "lucky_cat", "anvil", "jade"]
 const ITEM_DATA := {
-    "magnet": {"title": "磁铁", "desc": "拾取范围 +30/级"},
-    "boots": {"title": "疾行靴", "desc": "移动速度 +22/级"},
-    "holy_fire": {"title": "圣火", "desc": "生命上限 +20/级"},
+    "magnet": {"title": "引金石", "desc": "拾取范围 +30/级"},
+    "boots": {"title": "云履", "desc": "移动速度 +22/级"},
+    "holy_fire": {"title": "长明灯", "desc": "生命上限 +20/级"},
     "lucky_cat": {"title": "招财猫", "desc": "售价 +8% / 金币 +4% 每级"},
-    "anvil": {"title": "铁砧", "desc": "每级 1 次免费刷新 · 机关伤害 +6%"},
+    "anvil": {"title": "铸台", "desc": "每级 1 次免费刷新 · 机关伤害 +6%"},
     "jade": {"title": "翡翠", "desc": "金币收益 +10%/级 · 暴击率 +4%/级"},
 }
 
@@ -72,18 +73,30 @@ var beams: Array = []
 var orbiter_glows: Array = []
 var turret_glows: Array = []
 var _deployed_weapons := {}
+var _damage_report := {}
+
+# 性能：缓存敌人列表，避免每次取最近敌人/范围判定都新建一个组数组。
+var _enemy_cache: Array = []
+var _enemy_cache_frame := -1
+
+# 性能：发射台文字改用常驻 Label（原为每帧 12 次 draw_string）
+var _glyph_labels: Array[Label] = []
+var _name_labels: Array[Label] = []
+var _label_owner: Array[String] = []
+var _label_quality: Array[int] = []
 
 func _ready() -> void:
     player = get_parent()
     _refresh_item_cache()
     for _index in range(3):
-        var glow := ArtFX.add_glow(self, Color(0.3, 0.95, 1.0), 26.0, 0.24, 1)
+        var glow := ArtFX.add_glow(self, Color(0.36, 0.72, 0.78), 26.0, 0.24, 1)
         glow.visible = false
         orbiter_glows.append(glow)
     for _index in range(2):
-        var glow := ArtFX.add_glow(self, Color(0.45, 1.0, 1.0), 24.0, 0.22, 1)
+        var glow := ArtFX.add_glow(self, Color(0.42, 0.78, 0.60), 24.0, 0.22, 1)
         glow.visible = false
         turret_glows.append(glow)
+    _build_emplacement_labels()
 
 func _process(delta: float) -> void:
     if player == null or player.is_dead:
@@ -100,6 +113,7 @@ func _process(delta: float) -> void:
     _update_elixir(delta)
     _update_effects(delta)
     _sync_glows()
+    _sync_emplacement_labels()
     queue_redraw()
 
 func _hide_glows() -> void:
@@ -128,7 +142,7 @@ func _announce_deployments() -> void:
 
 func _sync_glows() -> void:
     var pulse := 0.5 + 0.5 * sin(float(Time.get_ticks_msec()) * 0.004)
-    var orbiter_color := Color(1.0, 0.55, 0.22) if _legendary("maple") else Color(0.3, 0.95, 1.0)
+    var orbiter_color := Color(0.92, 0.58, 0.24) if _legendary("maple") else Color(0.36, 0.72, 0.78)
     for index in range(orbiter_glows.size()):
         var glow: Sprite2D = orbiter_glows[index]
         if index < orbiter_positions.size():
@@ -138,7 +152,7 @@ func _sync_glows() -> void:
         else:
             glow.visible = false
 
-    var turret_color := Color(1.0, 0.45, 0.75) if _legendary("peony") else Color(0.45, 1.0, 1.0)
+    var turret_color := Color(0.78, 0.42, 0.58) if _legendary("peony") else Color(0.42, 0.78, 0.60)
     for index in range(turret_glows.size()):
         var glow: Sprite2D = turret_glows[index]
         if index < turrets.size():
@@ -147,6 +161,59 @@ func _sync_glows() -> void:
             glow.modulate = Color(turret_color.r, turret_color.g, turret_color.b, 0.16 + pulse * 0.08)
         else:
             glow.visible = false
+
+func _build_emplacement_labels() -> void:
+    # 性能：原 _draw_emplacements 每帧对每个已装配发射台调 2 次 draw_string
+    # （6 台 × 2 = 12 次/帧 = 720 次/秒），每次都走 TextServer 文本整形与字体图集切换。
+    # 改为常驻 Label：文本只在换装/升级时改一次，整形只做一次。
+    for index in range(EMPLACEMENTS.size()):
+        var glyph := UI.label("", 15, Color.WHITE)
+        glyph.size = Vector2(40.0, 20.0)
+        glyph.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        glyph.visible = false
+        add_child(glyph)
+        _glyph_labels.append(glyph)
+
+        var name_label := UI.label(str(EMPLACEMENT_NAMES[index]), 9, Color(0.80, 0.86, 0.83, 0.55))
+        name_label.size = Vector2(56.0, 14.0)
+        name_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+        add_child(name_label)
+        _name_labels.append(name_label)
+
+        _label_owner.append("<init>")
+        _label_quality.append(-1)
+
+func _sync_emplacement_labels() -> void:
+    for index in range(EMPLACEMENTS.size()):
+        var pos := to_local(EMPLACEMENTS[index])
+        var owner := str(slot_owners.get(index, ""))
+        var owned := owner != ""
+        var quality := _q(owner)
+        var accent := get_quality_color(quality) if owned else Color(0.788, 0.635, 0.300)
+
+        var glyph: Label = _glyph_labels[index]
+        var name_label: Label = _name_labels[index]
+        glyph.position = pos + Vector2(-20.0, -10.0)
+        name_label.position = pos + Vector2(-28.0, 27.0)
+
+        # 只在「装配者 + 品质」变化时改文本与颜色，避免每帧触发主题失效
+        if _label_owner[index] != owner or _label_quality[index] != quality:
+            _label_owner[index] = owner
+            _label_quality[index] = quality
+            glyph.text = _weapon_glyph(owner) if owned else ""
+            glyph.visible = owned
+            glyph.add_theme_color_override("font_color", accent.lightened(0.2))
+            name_label.add_theme_color_override("font_color", Color(0.8, 0.9, 0.89, 0.55 if owned else 0.3))
+
+func _enemy_list() -> Array:
+    # 性能：get_nodes_in_group 每次调用都会新建数组；本文件里有 4 处热路径调用
+    # （取最近敌人 / 跳跃选敌 / 范围命中 / 直线命中），链式武器还会嵌套调用。
+    # 改为按帧缓存，同一帧内复用同一份数组。
+    var frame := Engine.get_process_frames()
+    if _enemy_cache_frame != frame:
+        _enemy_cache_frame = frame
+        _enemy_cache = get_tree().get_nodes_in_group("enemies")
+    return _enemy_cache
 
 func _update_turrets(delta: float) -> void:
     var quality := _q("peony")
@@ -171,7 +238,7 @@ func _update_turrets(delta: float) -> void:
                 "deploy": 0.0,
                 "recoil": 0.0,
             })
-            var deploy_color := Color(1.0, 0.45, 0.75) if _legendary("peony") else Color(0.45, 1.0, 1.0)
+            var deploy_color := Color(0.78, 0.42, 0.58) if _legendary("peony") else Color(0.42, 0.78, 0.60)
             Fx.ring(deploy_pos, deploy_color, 30.0, 0.3, 2.5)
             Fx.sparks(deploy_pos, deploy_color, 6, 130.0, 0.26)
 
@@ -197,12 +264,12 @@ func _turret_fire(turret: Dictionary, target, quality: int) -> void:
     turret["aim"] = aim
     turret["recoil"] = 1.0
     var damage := _turret_damage(quality)
-    var flash_color := Color(1.0, 0.4, 0.72) if quality >= MAX_QUALITY else Color(0.45, 1.0, 1.0)
+    var flash_color := Color(0.78, 0.40, 0.56) if quality >= MAX_QUALITY else Color(0.42, 0.78, 0.60)
     if quality >= MAX_QUALITY:
         var end := from + aim * _turret_range(quality)
         var hits := _line_hits(from, end, 24.0, 99)
         for index in range(hits.size()):
-            _damage_enemy(hits[index], damage)
+            _damage_enemy(hits[index], damage, "peony")
             if index < 3:
                 Fx.sparks(hits[index].global_position, flash_color, 5, 200.0, 0.22)
                 Fx.ring(hits[index].global_position, flash_color, 18.0, 0.16, 2.0)
@@ -210,7 +277,7 @@ func _turret_fire(turret: Dictionary, target, quality: int) -> void:
         Fx.ring(from + aim * 20.0, flash_color, 28.0, 0.2, 3.0)
         Fx.shake(2.2, 0.08)
     else:
-        _damage_enemy(target, damage)
+        _damage_enemy(target, damage, "peony")
         _add_beam([from, to], flash_color, 3.6, 0.12)
         Fx.sparks(to, flash_color, 6, 180.0, 0.22)
         Fx.ring(to, flash_color, 16.0, 0.16, 2.0)
@@ -237,7 +304,7 @@ func _update_orbiter(delta: float) -> void:
         orbiter_tick = _orbiter_tick_interval(quality)
         var hit_any := false
         var shake_done := false
-        var blade_color := Color(1.0, 0.55, 0.2) if quality >= MAX_QUALITY else Color(0.3, 0.95, 1.0)
+        var blade_color := Color(0.92, 0.58, 0.24) if quality >= MAX_QUALITY else Color(0.36, 0.72, 0.78)
         for index in range(orbiter_positions.size()):
             var blade_position: Vector2 = orbiter_positions[index]
             var blade_angle := orbiter_angle + TAU * float(index) / float(maxi(1, orbiter_positions.size()))
@@ -247,7 +314,7 @@ func _update_orbiter(delta: float) -> void:
                 Fx.slash(blade_position, blade_angle + PI * 0.5, blade_color, 32.0, 0.16, PI * 0.72)
                 Fx.sparks(blade_position, blade_color, 4, 160.0, 0.2)
             for enemy in hit_enemies:
-                _damage_enemy(enemy, _orbiter_damage(quality))
+                _damage_enemy(enemy, _orbiter_damage(quality), "maple")
                 _apply_knockback(enemy, blade_position, 14.0)
                 hit_any = true
                 if not shake_done:
@@ -293,14 +360,14 @@ func _update_chain(delta: float) -> void:
             var branch_origin := previous.lerp(to, randf_range(0.3, 0.7))
             var branch_dir := (to - previous).normalized().orthogonal() * randf_range(-1.0, 1.0)
             chain_paths.append(_jagged_path(branch_origin, branch_origin + branch_dir * randf_range(24.0, 54.0), 3, 6.0))
-        _damage_enemy(enemy, _chain_damage(quality))
+        _damage_enemy(enemy, _chain_damage(quality), "justice")
         _apply_slow(enemy, 1.2, slow_factor)
-        Fx.sparks(to, Color(0.55, 1.0, 1.0), 5, 170.0, 0.2)
-        Fx.ring(to, Color(0.55, 1.0, 1.0), 17.0, 0.16, 2.0)
+        Fx.sparks(to, Color(0.46, 0.78, 0.70), 5, 170.0, 0.2)
+        Fx.ring(to, Color(0.46, 0.78, 0.70), 17.0, 0.16, 2.0)
         previous = to
     chain_life = 0.3
     chain_total = 0.3
-    Fx.ring(anchor, Color(0.55, 1.0, 1.0), 22.0, 0.2, 2.5)
+    Fx.ring(anchor, Color(0.46, 0.78, 0.70), 22.0, 0.2, 2.5)
     Fx.shake(2.0, 0.08)
     Audio.play("chain", -18.0)
 
@@ -334,12 +401,12 @@ func _update_pierce(delta: float) -> void:
         direction = Vector2.RIGHT
     var end := start + direction * _pierce_range(quality)
     var mark_bonus := 0.30 if quality >= MAX_QUALITY else 0.20
-    var color := Color(0.55, 0.85, 1.0, 0.9)
+    var color := Color(0.44, 0.66, 0.78, 0.9)
     if quality >= MAX_QUALITY:
         color = Color(0.85, 0.8, 1.0, 0.95)
     var hits := _line_hits(start, end, _pierce_width(quality), _pierce_count(quality))
     for enemy in hits:
-        _damage_enemy(enemy, _pierce_damage(quality))
+        _damage_enemy(enemy, _pierce_damage(quality), "vigil")
         _apply_mark(enemy, 2.0, mark_bonus)
         Fx.sparks(enemy.global_position, color, 5, 200.0, 0.2)
     _add_beam([start, end], color, 6.0 if quality >= MAX_QUALITY else 5.0, 0.2)
@@ -366,10 +433,14 @@ func _update_hammer(delta: float) -> void:
     var damage := int(20.0 * QUALITY_DAMAGE[quality])
     if quality >= MAX_QUALITY:
         damage = int(float(damage) * 1.5)
-    for enemy in _enemies_in_radius(impact, radius):
-        _damage_enemy(enemy, damage)
+    var struck: Array = _enemies_in_radius(impact, radius)
+    for enemy in struck:
+        _damage_enemy(enemy, damage, "hammer")
         _apply_knockback(enemy, impact, 35.0)
         _apply_stun(enemy, 0.4)
+    # 只有真正砸到东西才顿；空挥不进时间轴。
+    if not struck.is_empty():
+        Hitstop.request("hammer_hit")
     hammer_effects.append({
         "pos": impact,
         "life": 0.46,
@@ -401,6 +472,10 @@ func _update_elixir(delta: float) -> void:
     var damage := int(5.0 * QUALITY_DAMAGE[quality])
     if quality >= MAX_QUALITY:
         damage = int(9.0 * QUALITY_DAMAGE[quality])
+    # 性能：原实现无上限。单个毒领域约 31 条绘制指令 + 大面积半透明填充，
+    # 多个并发会明显推高单帧指令数，这里加硬上限（超出时回收最旧的一个）。
+    if poison_fields.size() >= MAX_POISON_FIELDS:
+        poison_fields.pop_front()
     poison_fields.append({
         "pos": pos,
         "life": 4.0,
@@ -410,9 +485,9 @@ func _update_elixir(delta: float) -> void:
         "damage": damage,
         "seed": randf() * TAU,
     })
-    Fx.ring(pos, Color(0.45, 1.0, 0.35), radius * 0.8, 0.3, 3.0)
-    Fx.sparks(pos, Color(0.5, 1.0, 0.4), 8, 130.0, 0.34)
-    ArtFX.flash_at(get_tree().current_scene, pos, Color(0.45, 1.0, 0.35), radius * 0.7, 0.24)
+    Fx.ring(pos, Color(0.58, 0.86, 0.60), radius * 0.8, 0.3, 3.0)
+    Fx.sparks(pos, Color(0.66, 0.90, 0.66), 8, 130.0, 0.34)
+    ArtFX.flash_at(get_tree().current_scene, pos, Color(0.58, 0.86, 0.60), radius * 0.7, 0.24)
     Audio.play("orbiter", -24.0)
 
 func _update_effects(delta: float) -> void:
@@ -433,7 +508,7 @@ func _update_effects(delta: float) -> void:
         if patch["tick"] <= 0.0:
             patch["tick"] = 0.32
             for enemy in _enemies_in_radius(patch["pos"], 30.0):
-                _damage_enemy(enemy, 4)
+                _damage_enemy(enemy, 4, "maple")
         if patch["life"] <= 0.0:
             fire_patches.remove_at(index)
 
@@ -450,11 +525,11 @@ func _update_effects(delta: float) -> void:
             field["tick"] = 0.5
             var hit_any := false
             for enemy in _enemies_in_radius(field["pos"], field["radius"]):
-                _damage_enemy(enemy, field["damage"])
+                _damage_enemy(enemy, field["damage"], "elixir")
                 _apply_slow(enemy, 0.6, 0.7)
                 hit_any = true
             if hit_any:
-                Fx.sparks(field["pos"] + Vector2(randf_range(-12.0, 12.0), randf_range(-8.0, 8.0)), Color(0.5, 1.0, 0.4), 3, 90.0, 0.3)
+                Fx.sparks(field["pos"] + Vector2(randf_range(-12.0, 12.0), randf_range(-8.0, 8.0)), Color(0.62, 0.88, 0.62), 3, 90.0, 0.3)
         if field["life"] <= 0.0:
             poison_fields.remove_at(index)
 
@@ -464,7 +539,7 @@ func _add_beam(points: Array, color: Color, width: float, life: float) -> void:
 func _nearest_enemy(from: Vector2, max_range: float):
     var best = null
     var best_distance := max_range
-    for node in get_tree().get_nodes_in_group("enemies"):
+    for node in _enemy_list():
         if not is_instance_valid(node) or node.is_queued_for_deletion():
             continue
         var distance: float = from.distance_to(node.global_position)
@@ -476,7 +551,7 @@ func _nearest_enemy(from: Vector2, max_range: float):
 func _nearest_enemy_excluding(from: Vector2, max_range: float, excluded: Array):
     var best = null
     var best_distance := max_range
-    for node in get_tree().get_nodes_in_group("enemies"):
+    for node in _enemy_list():
         if not is_instance_valid(node) or node.is_queued_for_deletion():
             continue
         if excluded.has(node):
@@ -489,7 +564,7 @@ func _nearest_enemy_excluding(from: Vector2, max_range: float, excluded: Array):
 
 func _enemies_in_radius(center: Vector2, radius: float) -> Array:
     var result: Array = []
-    for node in get_tree().get_nodes_in_group("enemies"):
+    for node in _enemy_list():
         if not is_instance_valid(node) or node.is_queued_for_deletion():
             continue
         if center.distance_to(node.global_position) <= radius:
@@ -498,7 +573,7 @@ func _enemies_in_radius(center: Vector2, radius: float) -> Array:
 
 func _line_hits(start: Vector2, end: Vector2, width: float, limit: int) -> Array:
     var candidates: Array = []
-    for node in get_tree().get_nodes_in_group("enemies"):
+    for node in _enemy_list():
         if not is_instance_valid(node) or node.is_queued_for_deletion():
             continue
         var closest := Geometry2D.get_closest_point_to_segment(node.global_position, start, end)
@@ -535,7 +610,7 @@ func _make_cracks(radius: float) -> Array:
         cracks.append(PackedVector2Array([p0, p1, p2]))
     return cracks
 
-func _damage_enemy(enemy, base_damage: int) -> void:
+func _damage_enemy(enemy, base_damage: int, source_id := "") -> void:
     if enemy == null or not is_instance_valid(enemy):
         return
     var crit_chance := CRIT_CHANCE + float(item_stats_cache.get("crit_bonus", 0.0))
@@ -546,6 +621,11 @@ func _damage_enemy(enemy, base_damage: int) -> void:
     var amount := int(round(float(base_damage) * wave_power * scale * (CRIT_MULT if is_crit else 1.0)))
     if enemy.has_method("take_damage"):
         enemy.take_damage(amount, is_crit)
+    if source_id != "":
+        var entry: Dictionary = _damage_report.get(source_id, {})
+        entry["damage"] = float(entry.get("damage", 0.0)) + float(amount)
+        entry["hits"] = int(entry.get("hits", 0)) + 1
+        _damage_report[source_id] = entry
 
 func _apply_slow(enemy, duration: float, factor: float) -> void:
     if enemy != null and is_instance_valid(enemy) and enemy.has_method("apply_slow"):
@@ -586,14 +666,15 @@ func _turret_cap(quality: int) -> int:
     return 2 if quality >= 3 else 1
 
 func _draw_emplacements() -> void:
-    var font := UI.regular_font()
+    # 性能：原此函数每帧 2 次 draw_string/台（12 次/帧）已迁到常驻 Label，
+    # 见 _build_emplacement_labels() / _sync_emplacement_labels()。
     var now := float(Time.get_ticks_msec()) * 0.001
     for index in range(EMPLACEMENTS.size()):
         var pos := to_local(EMPLACEMENTS[index])
         var owner := str(slot_owners.get(index, ""))
         var owned := owner != ""
         var quality := _q(owner)
-        var accent := get_quality_color(quality) if owned else Color(0.82, 0.7, 0.44)
+        var accent := get_quality_color(quality) if owned else Color(0.788, 0.635, 0.300)
         var pulse := 0.5 + 0.5 * sin(now * 1.7 + float(index) * 1.3)
 
         draw_circle(pos + Vector2(0.0, 7.0), 29.0, Color(0.0, 0.0, 0.0, 0.26))
@@ -616,32 +697,20 @@ func _draw_emplacements() -> void:
             draw_line(pos + Vector2(0.0, -5.0), pos + Vector2(0.0, 5.0), Color(0.6, 0.75, 0.74, 0.22), 1.0, true)
         else:
             var spin := now * 0.45 * (1.0 if index % 2 == 0 else -1.0)
-            for tooth in range(12):
-                var tooth_angle := spin + TAU * float(tooth) / 12.0
-                draw_line(
-                    pos + Vector2.from_angle(tooth_angle) * 23.0,
-                    pos + Vector2.from_angle(tooth_angle) * 26.5,
-                    Color(accent.r, accent.g, accent.b, 0.34 + pulse * 0.18), 1.4, true
-                )
+            # 性能+美术：原为「12 条旋转齿轮刻线 + 4 颗铆钉 + 4 条量程刻线」= 20 次 draw/台，
+            # 6 台就是 120 次/帧，是全场最贵的单点，而且正是最像机械零件的一处。
+            # 改为「呼吸光晕 + 双环 + 一段缓转弧」共 5 次 draw，观感也从齿轮变回法位印记。
             draw_circle(pos, 17.0, Color(accent.r, accent.g, accent.b, 0.09 + pulse * 0.04))
             draw_arc(pos, 17.0 + pulse * 1.5, 0.0, TAU, 36, Color(accent.r, accent.g, accent.b, 0.45), 2.0, true)
+            draw_arc(pos, 23.0, -spin, -spin + TAU * 0.72, 12, Color(accent.r, accent.g, accent.b, 0.22 + pulse * 0.10), 1.2, true)
             draw_circle(pos, 3.5, accent.lightened(0.25))
-            draw_string(font, pos + Vector2(-20.0, 6.0), _weapon_glyph(owner), HORIZONTAL_ALIGNMENT_CENTER, 40.0, 15, accent.lightened(0.2))
 
             var range_radius := _weapon_range(owner, quality)
-            draw_arc(pos, range_radius, 0.0, TAU, 64, Color(accent.r, accent.g, accent.b, 0.055), 1.0, true)
-            for tick in range(4):
-                var tick_angle := spin + TAU * float(tick) / 4.0
-                draw_line(
-                    pos + Vector2.from_angle(tick_angle) * (range_radius - 6.0),
-                    pos + Vector2.from_angle(tick_angle) * range_radius,
-                    Color(accent.r, accent.g, accent.b, 0.14), 1.0, true
-                )
+            draw_arc(pos, range_radius, 0.0, TAU, 48, Color(accent.r, accent.g, accent.b, 0.055), 1.0, true)
 
         var plate_pos := pos + Vector2(-28.0, 34.0)
         draw_rect(Rect2(plate_pos, Vector2(56.0, 14.0)), Color(0.015, 0.035, 0.04, 0.78))
         draw_rect(Rect2(plate_pos, Vector2(56.0, 14.0)), Color(accent.r, accent.g, accent.b, 0.3 if owned else 0.13), false, 1.0)
-        draw_string(font, plate_pos + Vector2(0.0, 11.0), str(EMPLACEMENT_NAMES[index]), HORIZONTAL_ALIGNMENT_CENTER, 56.0, 9, Color(0.8, 0.9, 0.89, 0.55 if owned else 0.3))
 
 func _draw() -> void:
     _draw_emplacements()
@@ -667,10 +736,10 @@ func _draw() -> void:
         var pos := to_local(turret["pos"])
         var aim: Vector2 = turret.get("aim", Vector2.UP)
         var quality := _q("peony")
-        var body := Color("#67e8f9")
+        var body := Color("#6ea8b6")
         if _legendary("peony"):
-            body = Color("#f472b6")
-        var trim := Color(0.85, 0.71, 0.42, 0.78)
+            body = Color("#c9a227")
+        var trim := Color(0.788, 0.635, 0.153, 0.78)
         var deploy := clampf(float(turret.get("deploy", 1.0)), 0.0, 1.0)
         var recoil := clampf(float(turret.get("recoil", 0.0)), 0.0, 1.0)
         var body_scale := 0.55 + 0.45 * deploy
@@ -714,7 +783,7 @@ func _draw() -> void:
             draw_arc(base, 18.0 + 14.0 * (1.0 - deploy), 0.0, TAU, 32, Color(body.r, body.g, body.b, 0.5 * (1.0 - deploy)), 2.0, true)
 
     if _q("maple") > 0:
-        var orbiter_color := Color("#f97316") if _legendary("maple") else Color("#22d3ee")
+        var orbiter_color := Color("#c9a227") if _legendary("maple") else Color("#5aac86")
         var anchor_local := to_local(_anchor_for("maple"))
         draw_arc(anchor_local, _orbiter_radius(_q("maple")), 0.0, TAU, 64, Color(orbiter_color.r, orbiter_color.g, orbiter_color.b, 0.08), 1.0, true)
         for index in range(orbiter_positions.size()):
@@ -772,20 +841,20 @@ func _draw() -> void:
         var alpha: float = clampf(float(field["life"]) / 4.0, 0.0, 1.0)
         var field_radius := float(field["radius"])
         var seed := float(field.get("seed", 0.0))
-        draw_circle(field_pos, field_radius, Color(0.3, 0.75, 0.22, 0.08 * alpha))
+        draw_circle(field_pos, field_radius, Color(0.32, 0.60, 0.40, 0.08 * alpha))
         for blob in range(4):
             var blob_angle := TAU * float(blob) / 4.0 + now * 0.45 + seed
             var blob_distance := field_radius * 0.36 * (0.72 + 0.28 * sin(now * 1.5 + float(blob)))
-            draw_circle(field_pos + Vector2.from_angle(blob_angle) * blob_distance, field_radius * 0.34, Color(0.36, 0.95, 0.3, 0.10 * alpha))
+            draw_circle(field_pos + Vector2.from_angle(blob_angle) * blob_distance, field_radius * 0.34, Color(0.48, 0.78, 0.52, 0.10 * alpha))
         for dash in range(20):
             var dash_angle := TAU * float(dash) / 20.0 + now * 0.1
-            draw_arc(field_pos, field_radius, dash_angle, dash_angle + 0.17, 6, Color(0.45, 1.0, 0.35, 0.3 * alpha), 2.0, true)
+            draw_arc(field_pos, field_radius, dash_angle, dash_angle + 0.17, 6, Color(0.58, 0.86, 0.60, 0.3 * alpha), 2.0, true)
         for bubble in range(6):
             var bubble_angle := TAU * float(bubble) / 6.0 + seed
             var bubble_distance := field_radius * 0.55 * float(bubble % 3 + 1) / 3.0
             var rise := fposmod(now * 16.0 + float(bubble) * 11.0, field_radius * 0.9)
             var bubble_pos := field_pos + Vector2.from_angle(bubble_angle) * bubble_distance + Vector2(0.0, field_radius * 0.45 - rise)
-            draw_circle(bubble_pos, 1.5 + float(bubble % 2), Color(0.55, 1.0, 0.4, 0.42 * alpha))
+            draw_circle(bubble_pos, 1.5 + float(bubble % 2), Color(0.68, 0.90, 0.66, 0.42 * alpha))
 
     if chain_life > 0.0 and not chain_paths.is_empty():
         var flicker := 0.72 + 0.28 * sin(now * 50.0)
@@ -794,11 +863,11 @@ func _draw() -> void:
             var local_path := PackedVector2Array()
             for point in path:
                 local_path.append(to_local(point))
-            draw_polyline(local_path, Color(0.25, 1.0, 1.0, 0.16 * chain_alpha), 14.0, true)
-            draw_polyline(local_path, Color(0.55, 1.0, 1.0, 0.78 * chain_alpha), 4.2, true)
-            draw_polyline(local_path, Color(0.92, 1.0, 1.0, 0.95 * chain_alpha), 1.8, true)
+            draw_polyline(local_path, Color(0.30, 0.60, 0.64, 0.16 * chain_alpha), 14.0, true)
+            draw_polyline(local_path, Color(0.62, 0.86, 0.84, 0.78 * chain_alpha), 4.2, true)
+            draw_polyline(local_path, Color(0.95, 0.99, 0.94, 0.95 * chain_alpha), 1.8, true)
             var end_point: Vector2 = local_path[local_path.size() - 1]
-            draw_circle(end_point, 4.5, Color(0.7, 1.0, 1.0, 0.85 * chain_alpha))
+            draw_circle(end_point, 4.5, Color(0.86, 0.97, 0.93, 0.85 * chain_alpha))
 
 func _q(weapon_type: String) -> int:
     return int(weapon_qualities.get(weapon_type, 0))
@@ -979,6 +1048,7 @@ func reset_build() -> void:
     hammer_timer = 0.0
     elixir_timer = 0.0
     _deployed_weapons.clear()
+    _damage_report.clear()
     _clear_transient_effects()
     item_stats_cache = get_item_stats()
 
@@ -996,6 +1066,15 @@ func _clear_transient_effects() -> void:
 func get_weapon_types() -> Array:
     return WEAPON_ORDER.duplicate()
 
+func get_weapon_damage_report() -> Dictionary:
+    return _damage_report.duplicate(true)
+
+func get_weapon_damage_total() -> float:
+    var total := 0.0
+    for entry in _damage_report.values():
+        total += float(entry.get("damage", 0.0))
+    return total
+
 func get_item_ids() -> Array:
     return ITEM_ORDER.duplicate()
 
@@ -1005,17 +1084,18 @@ func get_quality_name(quality: int) -> String:
     return QUALITY_NAMES[quality]
 
 func get_quality_color(quality: int) -> Color:
+    ## 与 ForgeUI.QUALITY_COLORS 保持一致（青绿机关：灰青 / 石青 / 青莲 / 泥金）
     match quality:
         1:
-            return Color("#9ca3af")
+            return Color("#8fa3a8")
         2:
-            return Color("#60a5fa")
+            return Color("#4f8fa8")
         3:
-            return Color("#c084fc")
+            return Color("#8a6fa8")
         4:
-            return Color("#fbbf24")
+            return Color("#e0b445")
         _:
-            return Color.WHITE
+            return Color("#cfc9bb")
 
 func get_weapon_title(weapon_type: String) -> String:
     if not WEAPON_DATA.has(weapon_type):

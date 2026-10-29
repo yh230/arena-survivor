@@ -1,5 +1,7 @@
 extends "res://scripts/enemy_base.gd"
 
+var _was_status_visual := false
+
 func _ready() -> void:
     super._ready()
     damage_number_color = Color("#fef3c7")
@@ -43,7 +45,13 @@ func _physics_process(delta: float) -> void:
         velocity = Vector2.ZERO
 
     _try_contact_damage()
-    queue_redraw()
+    # 性能：非精英、无状态效果时 _draw 内容（地面环 / 血条）完全静态，
+    # 血量变化已由 enemy_base.take_damage() 内的 queue_redraw() 兜底。
+    # 注意 status_visual 由真变假的那一帧也要重绘一次，否则减速/标记/眩晕弧会残留。
+    var status_visual := elite or _mark_time > 0.0 or has_slow() or is_stunned()
+    if status_visual or _was_status_visual:
+        queue_redraw()
+    _was_status_visual = status_visual
 
 func _draw() -> void:
     if elite:

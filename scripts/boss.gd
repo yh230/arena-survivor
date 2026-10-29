@@ -104,13 +104,16 @@ func _enrage() -> void:
     Fx.burst(global_position, Color(1.0, 0.45, 0.2), 22)
     Fx.shock(global_position, Color(1.0, 0.42, 0.18), 230.0, 0.55)
     Fx.ring(global_position, Color(1.0, 0.55, 0.25), 210.0, 0.5, 6.0)
-    Fx.sparks(global_position, Color(1.0, 0.55, 0.2), 20, 340.0, 0.5)
+    Fx.sparks(global_position, Color(0.92, 0.58, 0.24), 20, 340.0, 0.5)
     ArtFX.flash_at(get_tree().current_scene, global_position, Color(1.0, 0.4, 0.2), 220.0, 0.4)
     Fx.shake(10.0, 0.3)
     queue_redraw()
 
 func apply_stun(_duration: float) -> void:
     pass
+
+func _damage_source_name() -> String:
+    return "boss"
 
 func apply_slow(duration: float, factor: float) -> void:
     super.apply_slow(duration, 1.0 - (1.0 - factor) * 0.5)
@@ -150,7 +153,7 @@ func _draw() -> void:
     if enraged and active:
         var pulse := 0.5 + 0.5 * sin(anim_time * 5.5)
         draw_arc(Vector2.ZERO, 116.0 + pulse * 5.0, 0.0, TAU, 64, Color(1.0, 0.36, 0.14, 0.34 + pulse * 0.18), 4.0, true)
-        draw_arc(Vector2.ZERO, 104.0, -anim_time * 1.2, -anim_time * 1.2 + TAU * 0.7, 48, Color(1.0, 0.55, 0.2, 0.4), 2.0, true)
+        draw_arc(Vector2.ZERO, 104.0, -anim_time * 1.2, -anim_time * 1.2 + TAU * 0.7, 48, Color(0.92, 0.58, 0.24, 0.4), 2.0, true)
         for index in range(8):
             var rune_angle := anim_time * 0.9 + TAU * float(index) / 8.0
             draw_line(

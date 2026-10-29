@@ -12,9 +12,9 @@ const STAGE_IDS := [
     "2-1", "2-2", "2-3", "2-4",
     "3-1", "3-2", "3-3", "3-4",
 ]
-const CHAPTER_NAMES := ["第一章 · 熔炉工坊", "第二章 · 赤沙机关", "第三章 · 天工禁地"]
+const CHAPTER_NAMES := ["第一章 · 青炉洞天", "第二章 · 赤沙古渡", "第三章 · 天工禁地"]
 const STAGE_NAMES := [
-    ["熔炉入口", "风蚀回廊", "齿轮深渊", "守卫核心"],
+    ["青炉入口", "风蚀回廊", "机枢深渊", "玄枢秘境"],
     ["赤沙门", "流沙阱", "风暴眼", "沙王座"],
     ["禁地门", "铜人阵", "天工台", "百炼殿"],
 ]
@@ -36,6 +36,11 @@ const SECOND_STARTERS := ["peony", "justice", "elixir"]
 const SAVE_PATH := "user://arena_survivor.cfg"
 const TEST_SAVE_PATH := "user://arena_survivor_test.cfg"
 const PLAYTEST_SAVE_PATH := "user://arena_survivor_playtest.cfg"
+const REPORT_PATH := "user://run_report.json"
+const TEST_REPORT_PATH := "user://arena_survivor_report_test.json"
+const WAVE_PLAN_PATH := "res://data/waves.json"
+const WAVE_PATTERNS := ["ring", "two_sides", "one_side", "cone"]
+const WAVE_PLAN_KINDS := ["chaser", "shooter", "exploder"]
 
 @onready var player = $Player
 @onready var enemies: Node2D = $Enemies
@@ -47,6 +52,20 @@ const PLAYTEST_SAVE_PATH := "user://arena_survivor_playtest.cfg"
 
 var save_path := SAVE_PATH
 var test_mode := false
+
+var _cli_args: Array = []
+var _debug_invuln := false
+
+var _survival_sec := 0.0
+var _idle_sec := 0.0
+var _last_frame_usec := 0
+var _wave_start_sec := 0.0
+var _wave_durations: Array = []
+var _damage_taken_log: Array = []
+var _skill_casts := 0
+var _skill_damage := 0.0
+var _report_gold_earned := 0
+var _report_gold_spent := 0
 
 var stage_id := ""
 var stage_index := 0
@@ -84,26 +103,47 @@ var shop_offers: Array = []
 var last_heal_amount := 0
 var next_stage_id := ""
 
+var _wave_plans: Dictionary = {}
+var _plan_side_chosen := false
+var _plan_side := 0
+
 var max_unlocked := 0
 var endless_unlocked := false
 var best_endless_wave := 0
 var total_kills := 0
 var backdrop = null
+var backdrop_static = null
 
 var shake_time := 0.0
 var shake_strength := 0.0
+var _zoom_base := Vector2.ONE
+var _zoom_pulse_ms := 0.0
+var _zoom_pulse_amount := 0.0
+var _zoom_pulse_start_ms := 0
 
 func _ready() -> void:
-    var args := OS.get_cmdline_user_args()
-    test_mode = args.has("--smoke-test") or args.has("--screenshot") or args.has("--playtest")
+    _cli_args = _cmdline_flags()
+    test_mode = _cli_args.has("--smoke-test") or _cli_args.has("--screenshot") or _cli_args.has("--playtest")
     if test_mode:
-        save_path = PLAYTEST_SAVE_PATH if args.has("--playtest") else TEST_SAVE_PATH
+        save_path = PLAYTEST_SAVE_PATH if _cli_args.has("--playtest") else TEST_SAVE_PATH
         DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
+        DirAccess.remove_absolute(ProjectSettings.globalize_path(_report_path()))
+
+    # 性能：背景拆静态/动态两层。静态层只在 set_chapter 时重绘一次，
+    # 动态层只保留光柱/地纹/余烬/浮尘这些真正逐帧变化的内容。
+    backdrop_static = load("res://scripts/arena_backdrop_static.gd").new()
+    add_child(backdrop_static)
+    move_child(backdrop_static, 0)
+    backdrop_static.set_chapter(1)
 
     backdrop = load("res://scripts/arena_backdrop.gd").new()
     add_child(backdrop)
-    move_child(backdrop, 0)
+    move_child(backdrop, 1)
     backdrop.set_chapter(1)
+
+    # 性能：--perf 时挂上帧预算探针（不传该参数则完全不创建，零开销）
+    if _cli_args.has("--perf"):
+        add_child(load("res://scripts/perf_probe.gd").new())
 
     hud.stage_selected.connect(_on_stage_selected)
     hud.endless_selected.connect(_on_endless_selected)
@@ -117,8 +157,10 @@ func _ready() -> void:
     hud.stage_select.connect(_on_stage_select)
     hud.skill_requested.connect(player.try_cast_skill)
     player.health_changed.connect(hud.set_health)
+    player.skill_cast.connect(_on_skill_cast)
     Fx.shake_requested.connect(_on_shake_requested)
 
+    _load_wave_plans()
     _load_progress()
     hud.set_weapon_slots(weapon_manager.get_weapon_slots())
     hud.set_item_slots(weapon_manager.get_item_slots())
@@ -130,19 +172,188 @@ func _ready() -> void:
     else:
         _show_stage_select()
 
-    if args.has("--smoke-test"):
+    if _cli_args.has("--smoke-test"):
         call_deferred("_run_smoke_test")
-    elif args.has("--screenshot"):
+    elif _cli_args.has("--screenshot"):
         call_deferred("_capture_screenshot")
-    elif args.has("--playtest"):
+    elif _cli_args.has("--playtest"):
         call_deferred("_start_playtest")
 
 func _start_playtest() -> void:
     var bot: Node = load("res://scripts/playtest_bot.gd").new()
     add_child(bot)
 
+## 兼容两种写法：`godot --path . -- --smoke-test`（Godot 官方约定，取 user_args）
+## 和 `godot --path . --smoke-test`（CI/脚本习惯，参数落在 cmdline_args）。
+## 只做补读，不改任何测试分支的判定逻辑。
+func _cmdline_flags() -> Array:
+    var args := OS.get_cmdline_user_args()
+    for arg in OS.get_cmdline_args():
+        if arg == "--smoke-test" or arg == "--playtest" or arg == "--screenshot" or arg == "--perf":
+            if not args.has(arg):
+                args.append(arg)
+    return args
+
+## 调试热键仅在 debug 构建且非测试/截图/回放模式下生效；
+## 发布导出（OS.is_debug_build() == false）下整套按键完全惰性。
+func _debug_keys_enabled() -> bool:
+    return OS.is_debug_build() and not (
+        _cli_args.has("--smoke-test") or _cli_args.has("--playtest") or _cli_args.has("--screenshot"))
+
+func _unhandled_input(event: InputEvent) -> void:
+    if not _debug_keys_enabled():
+        return
+    if not (event is InputEventKey) or not event.pressed or event.echo:
+        return
+    match event.keycode:
+        KEY_F1:
+            _debug_next_wave()
+        KEY_F2:
+            _debug_clear_enemies()
+        KEY_F3:
+            _debug_toggle_invuln()
+        KEY_F4:
+            _debug_add_gold(100)
+        KEY_F5:
+            _debug_toggle_shop()
+        KEY_F6:
+            _debug_cycle_time_scale()
+        KEY_F7:
+            _debug_force_boss()
+        KEY_F8:
+            _debug_random_legendary()
+        KEY_F10:
+            _export_run_report()
+
+func _debug_next_wave() -> void:
+    if menu_open or game_over or stage_clear:
+        return
+    if shop_open:
+        _on_next_wave()
+        return
+    _clear_enemies()
+    wave += 1
+    _start_wave(wave)
+
+func _debug_clear_enemies() -> void:
+    _clear_enemies()
+
+func _debug_toggle_invuln() -> void:
+    _debug_invuln = not _debug_invuln
+    hud.set_debug_invuln(_debug_invuln)
+    if _debug_invuln:
+        hud.show_notice("调试无敌已开启")
+
+func _debug_add_gold(amount: int) -> void:
+    gold += amount
+    _report_gold_earned += amount
+    hud.set_gold(gold)
+
+func _debug_toggle_shop() -> void:
+    if wave_active or game_over or stage_clear or menu_open:
+        return
+    if shop_open:
+        _on_next_wave()
+    else:
+        _open_shop()
+
+func _debug_cycle_time_scale() -> void:
+    var next_scale := 1.0
+    if is_equal_approx(Engine.time_scale, 1.0):
+        next_scale = 2.0
+    elif is_equal_approx(Engine.time_scale, 2.0):
+        next_scale = 4.0
+    Engine.time_scale = next_scale
+    hud.show_notice("时间倍率 ×%d" % int(next_scale))
+
+func _debug_force_boss() -> void:
+    if menu_open or game_over or stage_clear:
+        return
+    if shop_open:
+        shop_open = false
+        get_tree().paused = false
+        hud.hide_shop()
+    _clear_enemies()
+    _start_wave(8)
+
+func _debug_random_legendary() -> void:
+    if menu_open or shop_open or game_over or stage_clear or not wave_active:
+        return
+    var candidates: Array = []
+    for weapon_type in weapon_manager.get_weapon_types():
+        if weapon_manager.get_weapon_quality(str(weapon_type)) == 0:
+            candidates.append(str(weapon_type))
+    if candidates.is_empty():
+        hud.show_notice("无空台位")
+        return
+    var chosen := str(candidates[randi() % candidates.size()])
+    var result: Dictionary = weapon_manager.buy_weapon(chosen, 4)
+    if not result.get("ok", false):
+        hud.show_notice("台位装配失败")
+        return
+    hud.set_weapon_slots(weapon_manager.get_weapon_slots())
+    hud.show_notice("传说 %s 已部署" % weapon_manager.get_weapon_title(chosen))
+
+func _report_path() -> String:
+    return TEST_REPORT_PATH if test_mode else REPORT_PATH
+
+func _on_skill_cast() -> void:
+    _skill_casts += 1
+
+func _record_skill_damage(amount: int) -> void:
+    _skill_damage += float(amount)
+
+func _record_damage_taken(amount: int, source: String) -> void:
+    _damage_taken_log.append({"wave": wave, "t": snappedf(_survival_sec, 0.01), "amount": amount, "source": source})
+
+func _export_run_report() -> Dictionary:
+    var weapons := {}
+    for weapon_id in weapon_manager.get_weapon_types():
+        weapons[str(weapon_id)] = {"damage": 0.0, "hits": 0}
+    var damage_report: Dictionary = weapon_manager.get_weapon_damage_report()
+    for weapon_id in damage_report.keys():
+        var entry: Dictionary = damage_report[weapon_id]
+        weapons[str(weapon_id)] = {
+            "damage": float(entry.get("damage", 0.0)),
+            "hits": int(entry.get("hits", 0)),
+        }
+    var report := {
+        "stage": "endless" if is_endless else stage_id,
+        "wave_reached": wave,
+        "survival_sec": snappedf(_survival_sec, 0.01),
+        "hero_level": hero_level,
+        "gold": {
+            "earned": _report_gold_earned,
+            "spent": _report_gold_spent,
+            "remaining": gold,
+        },
+        "weapons": weapons,
+        "skill": {"casts": _skill_casts, "damage": _skill_damage},
+        "damage_taken": _damage_taken_log.duplicate(true),
+        "waves": _wave_durations.duplicate(),
+        "idle_sec": snappedf(_idle_sec, 0.01),
+    }
+    var file := FileAccess.open(_report_path(), FileAccess.WRITE)
+    if file == null:
+        push_warning("run report write failed: %s" % _report_path())
+        return report
+    file.store_string(JSON.stringify(report, "  "))
+    file.close()
+    print("RUN_REPORT_WRITTEN path=%s wave=%d survival_sec=%.1f" % [_report_path(), wave, _survival_sec])
+    return report
+
 func _process(delta: float) -> void:
     _update_shake(delta)
+    _update_zoom_pulse()
+    var now_usec := Time.get_ticks_usec()
+    if _last_frame_usec > 0 and wave_active:
+        var wall_delta := float(now_usec - _last_frame_usec) / 1000000.0
+        _survival_sec += wall_delta
+        if player.get_move_input().length() < 0.1:
+            _idle_sec += wall_delta
+    _last_frame_usec = now_usec
+    if _debug_invuln and not player.is_dead:
+        player.invuln_time = maxf(player.invuln_time, 0.25)
     if menu_open or shop_open or game_over or stage_clear:
         return
     if not wave_active:
@@ -206,10 +417,22 @@ func _begin_run(selected_stage: String, endless: bool) -> void:
     gold = START_GOLD + (chapter - 1) * CHAPTER_START_GOLD
     if backdrop != null:
         backdrop.set_chapter(chapter)
+    if backdrop_static != null:
+        backdrop_static.set_chapter(chapter)
     shop_offers.clear()
     shop_message = ""
     last_heal_amount = 0
     total_kills = 0
+    _survival_sec = 0.0
+    _idle_sec = 0.0
+    _last_frame_usec = 0
+    _wave_start_sec = 0.0
+    _wave_durations.clear()
+    _damage_taken_log.clear()
+    _skill_casts = 0
+    _skill_damage = 0.0
+    _report_gold_earned = 0
+    _report_gold_spent = 0
 
     _clear_arena()
     player.visible = true
@@ -373,6 +596,9 @@ func _wave_heal_ratio(is_boss: bool) -> float:
 
 func _start_wave(number: int) -> void:
     wave = number
+    while _wave_durations.size() < number:
+        _wave_durations.append(0.0)
+    _wave_start_sec = _survival_sec
     weapon_manager.set_wave_power(number, chapter)
     player.set_wave_info(number, chapter)
     wave_active = true
@@ -389,6 +615,8 @@ func _start_wave(number: int) -> void:
     wave_killed = 0
     wave_remaining = wave_total
     spawn_timer = 0.6
+    _plan_side_chosen = false
+    _plan_side = 0
     hud.hide_boss_bar()
     hud.set_wave(wave, WAVES_PER_STAGE if not is_endless else 0)
     hud.set_stage(_stage_label())
@@ -405,7 +633,104 @@ func _spawn_interval() -> float:
 func _enemy_cap() -> int:
     return _enemy_cap_for(wave)
 
+## 波次计划（data/waves.json）：只约束敌人组合与出怪方向，不改数量/数值。
+## 任何一步读取或校验失败都返回空字典，_pick_enemy_type/_edge_spawn_position 自动回退原有随机逻辑。
+func _wave_plan_for(wave_no: int) -> Dictionary:
+    var plan: Variant = _wave_plans.get(wave_no, {})
+    if plan is Dictionary:
+        return plan
+    return {}
+
+func _load_wave_plans() -> void:
+    _wave_plans = {}
+    if not FileAccess.file_exists(WAVE_PLAN_PATH):
+        push_warning("data/waves.json 缺失，波次计划回退随机逻辑")
+        return
+    var file := FileAccess.open(WAVE_PLAN_PATH, FileAccess.READ)
+    if file == null:
+        push_warning("data/waves.json 打开失败，波次计划回退随机逻辑")
+        return
+    var parsed: Variant = JSON.parse_string(file.get_as_text())
+    file.close()
+    if not (parsed is Dictionary):
+        push_warning("data/waves.json 解析失败，波次计划回退随机逻辑")
+        return
+    for key in parsed.keys():
+        if not (key is String) or not (key as String).is_valid_int():
+            continue
+        var wave_no := int(key)
+        if wave_no < 1 or wave_no > WAVES_PER_STAGE:
+            continue
+        var raw: Variant = parsed[key]
+        if not (raw is Dictionary):
+            push_warning("waves.json 第 %d 波计划格式错误，回退随机逻辑" % wave_no)
+            continue
+        var plan := _validated_plan(wave_no, raw)
+        if not plan.is_empty():
+            _wave_plans[wave_no] = plan
+
+func _validated_plan(wave_no: int, raw: Dictionary) -> Dictionary:
+    var pattern := str(raw.get("pattern", ""))
+    if not WAVE_PATTERNS.has(pattern):
+        push_warning("waves.json 第 %d 波 pattern 无效，回退随机逻辑" % wave_no)
+        return {}
+    var weights := _validated_weights(raw.get("weights", null))
+    if weights.is_empty():
+        push_warning("waves.json 第 %d 波 weights 无效，回退随机逻辑" % wave_no)
+        return {}
+    var plan := {"pattern": pattern, "weights": weights}
+    plan["burst"] = clampi(int(raw.get("burst", 1)), 1, 8)
+    var edges_raw: Variant = raw.get("edges", [])
+    var clean_edges: Array = []
+    if edges_raw is Array:
+        for edge in edges_raw:
+            var edge_index := _edge_index(str(edge))
+            if edge_index >= 0:
+                clean_edges.append(["top", "right", "bottom", "left"][edge_index])
+    if clean_edges.size() > 0:
+        plan["edges"] = clean_edges
+    if bool(raw.get("diagonal", false)):
+        plan["diagonal"] = true
+    var sides_raw: Variant = raw.get("sides", [])
+    var clean_sides: Array = []
+    if sides_raw is Array:
+        for side in sides_raw:
+            var side_weights := _validated_weights(side)
+            if not side_weights.is_empty():
+                clean_sides.append(side_weights)
+    if clean_sides.size() == 2 and pattern == "two_sides":
+        plan["sides"] = clean_sides
+    return plan
+
+func _validated_weights(raw: Variant) -> Dictionary:
+    if not (raw is Dictionary):
+        return {}
+    var weights := {}
+    var total := 0
+    for kind in WAVE_PLAN_KINDS:
+        var value: Variant = raw.get(kind, 0)
+        if not (value is int or value is float):
+            return {}
+        var weight := maxi(0, int(value))
+        weights[kind] = weight
+        total += weight
+    if total <= 0:
+        return {}
+    return weights
+
 func _pick_enemy_type() -> String:
+    var plan := _wave_plan_for(wave)
+    if not plan.is_empty():
+        var weights: Dictionary = plan.get("weights", {})
+        if str(plan.get("pattern", "")) == "two_sides":
+            var sides: Array = plan.get("sides", [])
+            if sides.size() == 2:
+                var side_weights: Variant = sides[wave_spawned % 2]
+                if side_weights is Dictionary and not (side_weights as Dictionary).is_empty():
+                    weights = side_weights
+        var planned_kind := _weighted_enemy_type(weights)
+        if planned_kind != "":
+            return planned_kind
     if wave <= 2:
         return "chaser"
     var roll := randf()
@@ -422,7 +747,75 @@ func _pick_enemy_type() -> String:
         return "shooter"
     return "chaser"
 
+func _weighted_enemy_type(weights: Dictionary) -> String:
+    if not (weights is Dictionary) or weights.is_empty():
+        return ""
+    var total := 0
+    for kind in WAVE_PLAN_KINDS:
+        var value: Variant = weights.get(kind, 0)
+        if not (value is int or value is float):
+            return ""
+        total += maxi(0, int(value))
+    if total <= 0:
+        return ""
+    var roll := randf() * float(total)
+    var cumulative := 0
+    for kind in WAVE_PLAN_KINDS:
+        cumulative += maxi(0, int(weights.get(kind, 0)))
+        if roll < float(cumulative):
+            return kind
+    return "chaser"
+
 func _edge_spawn_position() -> Vector2:
+    var plan := _wave_plan_for(wave)
+    if plan.is_empty():
+        return _random_edge_spawn_position()
+    match str(plan.get("pattern", "")):
+        "ring":
+            return _random_edge_spawn_position()
+        "one_side":
+            return _edge_position_on(_planned_edge_index(), false)
+        "cone":
+            return _edge_position_on(_planned_edge_index(), true)
+        "two_sides":
+            if bool(plan.get("diagonal", false)):
+                return _corner_position(wave_spawned % 2)
+            var side_index := wave_spawned % 2
+            var edges: Array = plan.get("edges", [])
+            if edges.size() == 2:
+                return _edge_position_on(_edge_index(str(edges[side_index])), false)
+            if not _plan_side_chosen:
+                _plan_side = randi() % 2
+                _plan_side_chosen = true
+            if _plan_side == 0:
+                return _edge_position_on(1 if side_index == 0 else 3, false)
+            return _edge_position_on(0 if side_index == 0 else 2, false)
+    return _random_edge_spawn_position()
+
+func _planned_edge_index() -> int:
+    if not _plan_side_chosen:
+        var plan := _wave_plan_for(wave)
+        var edges: Array = plan.get("edges", []) if not plan.is_empty() else []
+        if edges.size() > 0:
+            _plan_side = _edge_index(str(edges[randi() % edges.size()]))
+        else:
+            _plan_side = randi() % 4
+        _plan_side_chosen = true
+    return _plan_side
+
+func _edge_index(name: String) -> int:
+    match name:
+        "top":
+            return 0
+        "right":
+            return 1
+        "bottom":
+            return 2
+        "left":
+            return 3
+    return -1
+
+func _random_edge_spawn_position() -> Vector2:
     var view_size := get_viewport_rect().size
     match randi() % 4:
         0:
@@ -434,15 +827,50 @@ func _edge_spawn_position() -> Vector2:
         _:
             return Vector2(-32.0, randf_range(0.0, view_size.y))
 
+func _edge_position_on(edge: int, concentrated: bool) -> Vector2:
+    var view_size := get_viewport_rect().size
+    var span_start := 0.0
+    var span_end := 1.0
+    if concentrated:
+        span_start = 0.28
+        span_end = 0.72
+    var t := randf_range(span_start, span_end)
+    match edge:
+        0:
+            return Vector2(view_size.x * t, -32.0)
+        1:
+            return Vector2(view_size.x + 32.0, view_size.y * t)
+        2:
+            return Vector2(view_size.x * t, view_size.y + 32.0)
+        _:
+            return Vector2(-32.0, view_size.y * t)
+
+func _corner_position(corner: int) -> Vector2:
+    var view_size := get_viewport_rect().size
+    var t := randf_range(0.0, 0.32)
+    if corner == 0:
+        if randi() % 2 == 0:
+            return Vector2(view_size.x * t, -32.0)
+        return Vector2(-32.0, view_size.y * t)
+    if randi() % 2 == 0:
+        return Vector2(view_size.x * (1.0 - t), view_size.y + 32.0)
+    return Vector2(view_size.x + 32.0, view_size.y * (1.0 - t))
+
 func _spawn_enemy() -> void:
-    var enemy_type := _pick_enemy_type()
+    var burst := 1
+    var plan := _wave_plan_for(wave)
+    if not plan.is_empty():
+        burst = clampi(int(plan.get("burst", 1)), 1, 8)
+    burst = clampi(burst, 1, maxi(1, wave_total - wave_spawned))
+    for burst_index in range(burst):
+        _spawn_one_enemy(_pick_enemy_type(), _edge_spawn_position())
+
+func _spawn_one_enemy(enemy_type: String, pos: Vector2) -> void:
     var scene: PackedScene = ENEMY_SCENE
     if enemy_type == "shooter":
         scene = SHOOTER_SCENE
     elif enemy_type == "exploder":
         scene = EXPLODER_SCENE
-
-    var pos := _edge_spawn_position()
 
     var enemy = scene.instantiate()
     if enemy_type == "shooter":
@@ -533,6 +961,8 @@ func _on_boss_defeated() -> void:
 
 func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave := true) -> void:
     total_kills += 1
+    # 击杀顿感：内部限流为每 120ms 最多一次，且与其它 hitstop 共用 90ms/1s 预算。
+    Hitstop.request("kill")
     _gain_hero_xp(coin_count)
     if counts_toward_wave and wave_active and not boss_wave:
         wave_killed = mini(wave_total, wave_killed + 1)
@@ -547,11 +977,15 @@ func _on_enemy_died(drop_position: Vector2, coin_count: int, counts_toward_wave 
         coin.collected.connect(_on_coin_collected)
 
 func _on_coin_collected(value: int) -> void:
-    gold += int(float(value) * gold_mult * _chapter_gold_mult())
+    var gained := int(float(value) * gold_mult * _chapter_gold_mult())
+    gold += gained
+    _report_gold_earned += gained
     hud.set_gold(gold)
 
 func _finish_wave() -> void:
     wave_active = false
+    if wave >= 1 and wave <= _wave_durations.size():
+        _wave_durations[wave - 1] = snappedf(_survival_sec - _wave_start_sec, 0.01)
     _collect_all_coins()
     _clear_enemies()
     _heal_after_wave()
@@ -574,6 +1008,8 @@ func _heal_after_wave() -> void:
 func _open_shop() -> void:
     shop_open = true
     get_tree().paused = true
+    # 暂停期间 _process 停跑：重置挂钟戳，恢复后的首帧不会把商店耗时算进 survival_sec。
+    _last_frame_usec = 0
     var stats: Dictionary = weapon_manager.get_item_stats()
     shop_free_rerolls = int(stats["free_rerolls"])
     var heal_note := ""
@@ -774,6 +1210,7 @@ func _on_buy_offer(index: int) -> void:
         return
 
     gold -= int(offer["price"])
+    _report_gold_spent += int(offer["price"])
     offer["bought"] = true
     var final_quality := int(result.get("quality", offer["quality"]))
     var quality_name: String = weapon_manager.get_quality_name(final_quality)
@@ -808,6 +1245,7 @@ func _on_reroll_shop() -> void:
         shop_message = "免费刷新"
     elif gold >= REROLL_COST:
         gold -= REROLL_COST
+        _report_gold_spent += REROLL_COST
         shop_message = "已刷新"
     else:
         shop_message = "金币不足"
@@ -826,6 +1264,7 @@ func _on_sell_weapon(weapon_id: String) -> void:
     var price := int(float(_offer_price("weapon", quality)) * 0.5 * sell_mult)
     weapon_manager.sell_weapon(weapon_id)
     gold += price
+    _report_gold_earned += price
     shop_message = "已出售，获得 %d 金币" % price
     _apply_item_stats()
     hud.set_gold(gold)
@@ -841,6 +1280,7 @@ func _on_sell_item(item_id: String) -> void:
     var price := int(float(_offer_price("item", quality)) * 0.5 * sell_mult)
     weapon_manager.sell_item(item_id)
     gold += price
+    _report_gold_earned += price
     shop_message = "已出售，获得 %d 金币" % price
     _apply_item_stats()
     hud.set_gold(gold)
@@ -902,12 +1342,13 @@ func _gain_hero_xp(amount: int) -> void:
     if leveled:
         hud.show_notice("机关术精进 · Lv.%d" % hero_level)
         Audio.play("upgrade", -10.0)
-        Fx.burst(player.global_position, Color(0.85, 0.71, 0.42), 14)
+        Fx.burst(player.global_position, Color(0.788, 0.635, 0.153), 14)
         ArtFX.flash_at(get_tree().current_scene, player.global_position, Color(1.0, 0.85, 0.45), 56.0, 0.28)
 
 func _on_stage_clear() -> void:
     stage_clear = true
     get_tree().paused = true
+    _export_run_report()
     if stage_index >= 0:
         if stage_index + 1 < STAGE_IDS.size():
             max_unlocked = maxi(max_unlocked, stage_index + 1)
@@ -948,6 +1389,7 @@ func _on_player_died() -> void:
         return
     game_over = true
     wave_active = false
+    _export_run_report()
     if is_endless:
         best_endless_wave = maxi(best_endless_wave, wave)
         _save_progress()
@@ -1038,7 +1480,9 @@ func _save_progress() -> void:
 func _collect_all_coins() -> void:
     for coin in get_tree().get_nodes_in_group("coin"):
         if is_instance_valid(coin):
-            gold += int(float(coin.value) * gold_mult * _chapter_gold_mult())
+            var gained := int(float(coin.value) * gold_mult * _chapter_gold_mult())
+            gold += gained
+            _report_gold_earned += gained
             coin.queue_free()
     hud.set_gold(gold)
 
@@ -1069,6 +1513,32 @@ func _update_shake(delta: float) -> void:
         shake_strength = 0.0
     else:
         camera.offset = Vector2(randf_range(-1.0, 1.0), randf_range(-1.0, 1.0)) * shake_strength
+
+## 相机 zoom 脉冲：1.0 → 1.0+amount → 1.0。
+## 现有相机逻辑只写 camera.offset（屏震），zoom 全工程无第二处写入，因此无冲突。
+## 用挂钟计时而不用 Tween：hitstop 期间 time_scale 塌缩会把 Tween 一起拖慢，
+## 这个脉冲必须无视时间缩放，才能在 45ms 的停顿里完成"呼吸"。
+func pulse_camera_zoom(amount := 0.02, duration := 0.12) -> void:
+    if camera == null or amount <= 0.0:
+        return
+    _zoom_pulse_amount = amount
+    # 基准 zoom 只在「没有脉冲在跑」时采样：连着两次脉冲时，第二次若把被抬高过的
+    # zoom 当成基准归位，相机会永久停在放大值上。
+    if _zoom_pulse_ms <= 0.0:
+        _zoom_base = camera.zoom
+    _zoom_pulse_ms = maxf(10.0, duration * 1000.0)
+    _zoom_pulse_start_ms = Time.get_ticks_msec()
+
+func _update_zoom_pulse() -> void:
+    if _zoom_pulse_ms <= 0.0 or camera == null:
+        return
+    var elapsed := float(Time.get_ticks_msec() - _zoom_pulse_start_ms)
+    var t := clampf(elapsed / _zoom_pulse_ms, 0.0, 1.0)
+    camera.zoom = _zoom_base * (1.0 + _zoom_pulse_amount * sin(PI * t))
+    if t >= 1.0:
+        camera.zoom = _zoom_base
+        _zoom_pulse_ms = 0.0
+        _zoom_pulse_amount = 0.0
 
 func _capture_screenshot() -> void:
     await get_tree().create_timer(0.6).timeout
@@ -1170,7 +1640,7 @@ func _capture_screenshot() -> void:
     Fx.clear_effects()
     stage_clear = true
     get_tree().paused = true
-    hud.show_stage_clear("1-1 · 熔炉入口", true, "波次 16 / 16\n金币 100\n构筑 6 武器 · 2 道具", "下一关 · 1-2 风蚀回廊")
+    hud.show_stage_clear("1-1 · 青炉入口", true, "波次 16 / 16\n金币 100\n构筑 6 武器 · 2 道具", "下一关 · 1-2 风蚀回廊")
     await get_tree().create_timer(0.5).timeout
     await RenderingServer.frame_post_draw
     _save_screenshot("res://screenshots/m5_clear.png")
@@ -1248,6 +1718,10 @@ func _run_smoke_test() -> void:
     var hero_error := _check_hero_rules()
     if hero_error != "":
         _fail_test(hero_error)
+        return
+    var wave_plan_error := _check_wave_plan_rules()
+    if wave_plan_error != "":
+        _fail_test(wave_plan_error)
         return
 
     _begin_run("1-1", false)
@@ -1762,6 +2236,66 @@ func _run_smoke_test() -> void:
         _fail_test("endless wave did not advance")
         return
 
+    if _debug_keys_enabled():
+        _fail_test("debug keys must be disabled under --smoke-test")
+        return
+    print("DEBUG_CHECK debug_keys_enabled=false under --smoke-test")
+    _start_wave(1)
+    _debug_next_wave()
+    _debug_next_wave()
+    _debug_next_wave()
+    if wave != 4:
+        _fail_test("debug next wave x3 did not reach wave 4")
+        return
+    print("DEBUG_CHECK debug_next_wave x3 -> wave=%d" % wave)
+    var gold_before_debug := gold
+    _debug_add_gold(100)
+    if gold != gold_before_debug + 100:
+        _fail_test("debug add gold 100 wrong")
+        return
+    print("DEBUG_CHECK debug_add_gold(100) -> gold=%d" % gold)
+    var dummy = ENEMY_SCENE.instantiate()
+    dummy.max_health = 99999
+    dummy.coin_drop = 0
+    dummy.move_speed = 0.0
+    dummy.contact_range = 0.0
+    enemies.add_child(dummy)
+    dummy.global_position = player.global_position + Vector2(60.0, 0.0)
+    weapon_manager._damage_enemy(dummy, 50, "maple")
+    weapon_manager._damage_enemy(dummy, 30, "peony")
+    dummy.queue_free()
+    _export_run_report()
+    if not FileAccess.file_exists(_report_path()):
+        _fail_test("run report file missing")
+        return
+    var parsed = JSON.parse_string(FileAccess.get_file_as_string(_report_path()))
+    if not (parsed is Dictionary):
+        _fail_test("run report not a JSON object")
+        return
+    var required_keys := ["stage", "wave_reached", "survival_sec", "hero_level", "gold", "weapons", "skill", "damage_taken", "waves", "idle_sec"]
+    for key in required_keys:
+        if not parsed.has(key):
+            _fail_test("run report missing key %s" % key)
+            return
+    var weapons_sum := 0.0
+    for weapon_id in parsed["weapons"].keys():
+        weapons_sum += float(parsed["weapons"][weapon_id].get("damage", 0.0))
+    var damage_total: float = weapon_manager.get_weapon_damage_total()
+    if absf(weapons_sum - damage_total) > 0.5:
+        _fail_test("run report weapon damage sum mismatch")
+        return
+    print("DEBUG_CHECK run_report keys=%d weapons_damage_sum=%.1f total=%.1f" % [required_keys.size(), weapons_sum, damage_total])
+    _debug_force_boss()
+    if not boss_wave or wave != 8:
+        _fail_test("debug force boss did not start boss wave")
+        return
+    print("DEBUG_CHECK debug_force_boss -> wave=%d boss_wave=%s" % [wave, str(boss_wave)])
+
+    var wave_spawn_error := _run_wave_spawn_checks()
+    if wave_spawn_error != "":
+        _fail_test(wave_spawn_error)
+        return
+
     player.take_damage(999999)
     await get_tree().create_timer(0.3).timeout
     if not hud.is_end_panel_visible():
@@ -1903,6 +2437,128 @@ func _check_weapon_rules() -> String:
         return "legendary weapon damage wrong"
     if not is_equal_approx(weapon_manager.get_weapon_damage_scale(), 1.15):
         return "hero attribute damage scale wrong"
+    return ""
+
+## 波次计划规则：wave=3/5/7/9/11/13/15 有预期 pattern/weights/burst，
+## 第 8/16（Boss）与第 6/14（精英）以及其余波次必须保持现有随机逻辑（计划为空）。
+func _check_wave_plan_rules() -> String:
+    var expected := [
+        [3, "two_sides", {"chaser": 80, "shooter": 20, "exploder": 0}, 1],
+        [5, "one_side", {"chaser": 60, "shooter": 30, "exploder": 10}, 1],
+        [7, "one_side", {"chaser": 15, "shooter": 15, "exploder": 70}, 2],
+        [9, "ring", {"chaser": 85, "shooter": 10, "exploder": 5}, 1],
+        [11, "two_sides", {"chaser": 50, "shooter": 50, "exploder": 0}, 1],
+        [13, "two_sides", {"chaser": 20, "shooter": 0, "exploder": 80}, 1],
+        [15, "cone", {"chaser": 34, "shooter": 33, "exploder": 33}, 1],
+    ]
+    for entry in expected:
+        var wave_no := int(entry[0])
+        var plan := _wave_plan_for(wave_no)
+        if plan.is_empty():
+            return "wave %d plan missing" % wave_no
+        if str(plan.get("pattern", "")) != str(entry[1]):
+            return "wave %d pattern wrong" % wave_no
+        var weights: Dictionary = plan.get("weights", {})
+        var wanted: Dictionary = entry[2]
+        for kind in WAVE_PLAN_KINDS:
+            if int(weights.get(kind, -1)) != int(wanted.get(kind, -1)):
+                return "wave %d weight %s wrong" % [wave_no, kind]
+        if int(plan.get("burst", 1)) != int(entry[3]):
+            return "wave %d burst wrong" % wave_no
+    if not bool(_wave_plan_for(11).get("diagonal", false)):
+        return "wave 11 diagonal missing"
+    var sides: Array = _wave_plan_for(11).get("sides", [])
+    if sides.size() != 2 or int(sides[0].get("shooter", 0)) != 100 or int(sides[1].get("chaser", 0)) != 100:
+        return "wave 11 sides wrong"
+    if _wave_plan_for(3).get("edges", []) != ["left", "right"]:
+        return "wave 3 edges wrong"
+    if _wave_plan_for(13).get("edges", []) != ["left", "right"]:
+        return "wave 13 edges wrong"
+    for empty_wave in [1, 2, 4, 6, 8, 10, 12, 14, 16]:
+        if not _wave_plan_for(empty_wave).is_empty():
+            return "wave %d must keep existing random logic" % empty_wave
+    return ""
+
+func _spawn_side_name(pos: Vector2, view_size: Vector2) -> String:
+    if absf(pos.y + 32.0) < 0.5:
+        return "top"
+    if absf(pos.y - (view_size.y + 32.0)) < 0.5:
+        return "bottom"
+    if absf(pos.x + 32.0) < 0.5:
+        return "left"
+    if absf(pos.x - (view_size.x + 32.0)) < 0.5:
+        return "right"
+    return "unknown"
+
+## 固定种子下验证出怪点约束与 burst：第 5 波 one_side 全部落在同一边、
+## 第 7 波一次生成 2 只且同边；第 8 波仍走 Boss、第 6 波仍走精英。
+func _run_wave_spawn_checks() -> String:
+    for wave_no in [3, 5, 7, 9, 11, 13, 15]:
+        var plan := _wave_plan_for(wave_no)
+        print("DEBUG_CHECK wave_plan wave=%d pattern=%s weights=%s burst=%d" % [
+            wave_no, str(plan.get("pattern", "")), str(plan.get("weights", {})), int(plan.get("burst", 1))])
+
+    var view_size := get_viewport_rect().size
+    seed(24681357)
+    _start_wave(5)
+    spawn_timer = 1.0e9
+    _clear_enemies()
+    var shooter_count := 0
+    var first_side := ""
+    var all_same_side := true
+    var sample_pos := Vector2.ZERO
+    for spawn_index in range(16):
+        var before := enemies.get_child_count()
+        _spawn_enemy()
+        if enemies.get_child_count() != before + 1:
+            return "wave 5 spawn did not add exactly 1 enemy"
+        var spawned = enemies.get_child(enemies.get_child_count() - 1)
+        var side := _spawn_side_name(spawned.global_position, view_size)
+        if side == "unknown":
+            return "wave 5 spawn off edge at %s" % str(spawned.global_position)
+        if first_side == "":
+            first_side = side
+            sample_pos = spawned.global_position
+        elif side != first_side:
+            all_same_side = false
+        if spawned.get("projectile_damage") != null:
+            shooter_count += 1
+    if not all_same_side:
+        return "wave 5 one_side spawns spread across multiple edges"
+    if shooter_count < 1:
+        return "wave 5 spawns contained no shooter under fixed seed"
+    for spawned in enemies.get_children():
+        if spawned.get("projectile_damage") != null and _spawn_side_name(spawned.global_position, view_size) != first_side:
+            return "wave 5 shooter off the planned side"
+    print("DEBUG_CHECK w5 one_side side=%s spawns=16 shooters=%d all_on_side=%s first=%s" % [
+        first_side, shooter_count, str(all_same_side), str(sample_pos)])
+
+    seed(97531864)
+    _start_wave(7)
+    spawn_timer = 1.0e9
+    _clear_enemies()
+    var before7 := enemies.get_child_count()
+    _spawn_enemy()
+    var added7 := enemies.get_child_count() - before7
+    if added7 != 2:
+        return "wave 7 burst did not spawn 2 in one call (got %d)" % added7
+    var side7 := _spawn_side_name(enemies.get_child(before7).global_position, view_size)
+    if side7 == "unknown":
+        return "wave 7 burst spawn off edge"
+    for index in range(1, added7):
+        if _spawn_side_name(enemies.get_child(before7 + index).global_position, view_size) != side7:
+            return "wave 7 burst spawns on different sides"
+    print("DEBUG_CHECK w7 burst=%d side=%s both_on_side=true" % [added7, side7])
+
+    _start_wave(8)
+    if not boss_wave or not _wave_plan_for(8).is_empty():
+        return "wave 8 must keep boss logic"
+    _start_wave(6)
+    if boss_wave or not _is_elite_wave(6) or not _wave_plan_for(6).is_empty():
+        return "wave 6 must keep elite logic"
+    print("DEBUG_CHECK boss_elite w8 boss_wave=true plan_empty=true w6 boss_wave=false elite=true plan_empty=true")
+    spawn_timer = 1.0e9
+    _clear_enemies()
     return ""
 
 func _test_finish_wave() -> void:

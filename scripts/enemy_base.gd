@@ -28,6 +28,7 @@ var health_bar_y := -38.0
 
 var _art_glow: Sprite2D
 var _art_shadow: Sprite2D
+var _flash_overlay: Sprite2D
 var _art_glow_strength := 0.2
 var _art_glow_speed := 4.0
 var _art_bob_speed := 8.0
@@ -35,8 +36,8 @@ var _art_bob_height := 1.5
 
 var damage_number_color := Color("#fef3c7")
 var damage_number_height := -26.0
-var health_bar_color := Color("#fca5a5")
-var death_color := Color("#f87171")
+var health_bar_color := Color("#d4816f")
+var death_color := Color("#c84a3c")
 var death_burst := 8
 var die_sound := "enemy_die"
 var die_sound_db := -10.0
@@ -53,6 +54,8 @@ var _pending_damage_time := 0.0
 var _hit_punch := 0.0
 var _spawn_time := 0.0
 var _impact_fx_timer := 0.0
+
+static var _texture_cache: Dictionary = {}
 
 func _ready() -> void:
     health = max_health
@@ -102,7 +105,13 @@ func _setup_art() -> void:
     var path := _art_texture_path()
     if path.is_empty():
         return
-    art_texture = load(path)
+    # 性能：原实现每个敌人实例都 load() 一次路径（走 ResourceLoader 查表）。
+    # 同一类敌人共用一张纹理，静态缓存后只在首次加载。
+    if _texture_cache.has(path):
+        art_texture = _texture_cache[path]
+    else:
+        art_texture = load(path)
+        _texture_cache[path] = art_texture
     var size := _art_size()
     status_radius = minf(size * 0.55, 60.0)
     health_bar_y = -size * 0.64
@@ -114,10 +123,11 @@ func _setup_art() -> void:
     _art_glow = ArtFX.add_glow(self, _art_glow_color(), _art_glow_radius(), _art_glow_strength, -3)
     art = Sprite2D.new()
     art.texture = art_texture
-    art.material = ArtFX.flash_material()
     art.z_index = -1
     art.z_as_relative = true
     add_child(art)
+    # 受击闪光改为共享材质的叠层 sprite（原为逐实例 ShaderMaterial）
+    _flash_overlay = ArtFX.add_flash_overlay(art, art_texture)
 
 func _is_player_valid() -> bool:
     return player != null and is_instance_valid(player) and not player.is_dead
@@ -125,9 +135,9 @@ func _is_player_valid() -> bool:
 func _process(delta: float) -> void:
     if art == null:
         return
-    var material := art.material as ShaderMaterial
-    if material != null:
-        material.set_shader_parameter("flash", clampf(damage_flash / 0.09, 0.0, 1.0) * _art_flash_strength())
+    # 性能：原为每帧对每个敌人 set_shader_parameter（32 敌 × 60fps ≈ 1920 次/秒）。
+    # 现改为共享材质叠层，仅在真正闪光时写一次 alpha，其余帧整层隐藏。
+    ArtFX.drive_flash_overlay(_flash_overlay, clampf(damage_flash / 0.09, 0.0, 1.0) * _art_flash_strength())
     var spawn_t := clampf(_spawn_time / 0.24, 0.0, 1.0)
     var spawn_scale := 0.36 + 0.64 * (1.0 - pow(1.0 - spawn_t, 3.0))
     art.scale = Vector2(1.0 + _hit_punch * 0.16, 1.0 - _hit_punch * 0.10) * spawn_scale
@@ -138,6 +148,9 @@ func _process(delta: float) -> void:
         art.rotation = lerp_angle(art.rotation, target_angle, clampf(delta * 10.0, 0.0, 1.0))
     elif _art_faces_target() and _is_player_valid():
         art.flip_h = player.global_position.x < global_position.x
+        if _flash_overlay != null:
+            # 叠层是 art 的子节点，flip_h 不会继承，需同步镜像
+            _flash_overlay.flip_h = art.flip_h
     if _art_glow != null:
         var pulse := 0.5 + 0.5 * sin(anim_time * _art_glow_speed)
         _art_glow.modulate.a = _art_glow_strength * (0.7 + pulse * 0.5) * _art_glow_boost()
@@ -240,13 +253,28 @@ func _flush_damage() -> void:
     _pending_damage = 0
     _pending_crit = false
 
+func _damage_source_name() -> String:
+    return "enemy"
+
+func _report_player_damage(amount: int, source: String) -> void:
+    var scene := get_tree().current_scene
+    if scene != null and scene.has_method("_record_damage_taken"):
+        scene._record_damage_taken(amount, source)
+
 func _try_contact_damage() -> void:
     if contact_cooldown > 0.0 or contact_range <= 0.0:
         return
     if player == null or not is_instance_valid(player) or player.is_dead:
         return
     if global_position.distance_to(player.global_position) <= contact_range:
-        player.take_damage(contact_damage)
+        var health_before := int(player.health)
+        if player.has_method("take_damage_from"):
+            player.take_damage_from(contact_damage, global_position)
+        else:
+            player.take_damage(contact_damage)
+        var dealt := health_before - int(player.health)
+        if dealt > 0:
+            _report_player_damage(dealt, _damage_source_name())
         contact_cooldown = contact_interval
 
 func _draw_health_bar(width := 0.0, y := 0.0) -> void:
@@ -257,24 +285,27 @@ func _draw_health_bar(width := 0.0, y := 0.0) -> void:
     if y == 0.0:
         y = health_bar_y
     var ratio := clampf(float(health) / float(maxi(1, max_health)), 0.0, 1.0)
-    draw_rect(Rect2(-width * 0.5 - 1.0, y - 1.0, width + 2.0, 7.0), Color(0.02, 0.04, 0.05, 0.82))
-    draw_rect(Rect2(-width * 0.5, y, width, 5.0), Color(0.0, 0.0, 0.0, 0.62))
+    draw_rect(Rect2(-width * 0.5 - 1.0, y - 1.0, width + 2.0, 7.0), Color(0.039, 0.078, 0.094, 0.85))
+    draw_rect(Rect2(-width * 0.5, y, width, 5.0), Color(0.020, 0.030, 0.040, 0.66))
     var fill := Rect2(-width * 0.5, y, width * ratio, 5.0)
     draw_rect(fill, health_bar_color)
     if ratio > 0.02:
         draw_rect(Rect2(fill.position, Vector2(fill.size.x, 1.5)), health_bar_color.lightened(0.45))
-    draw_line(Vector2(-width * 0.5 - 1.0, y + 6.0), Vector2(width * 0.5 + 1.0, y + 6.0), Color(0.85, 0.71, 0.42, 0.22), 1.0)
+    draw_line(Vector2(-width * 0.5 - 1.0, y + 6.0), Vector2(width * 0.5 + 1.0, y + 6.0), Color(0.788, 0.635, 0.153, 0.22), 1.0)
 
 func _draw_status_marks() -> void:
-    var ground_alpha := 0.30 if elite else 0.15
-    draw_arc(Vector2.ZERO, status_radius * 1.04, 0.0, TAU, 32, Color(health_bar_color.r, health_bar_color.g, health_bar_color.b, ground_alpha), 1.0, true)
+    var ground_alpha := 0.34 if elite else 0.16
+    var gold := Color(0.788, 0.635, 0.153)
+    # 法阵双环：细金外环 + 更淡的内环，替代原「与血条同色的单圈」
+    draw_arc(Vector2.ZERO, status_radius * 1.04, 0.0, TAU, 32, Color(gold.r, gold.g, gold.b, ground_alpha), 1.0, true)
+    draw_arc(Vector2.ZERO, status_radius * 0.92, 0.0, TAU, 28, Color(gold.r, gold.g, gold.b, ground_alpha * 0.42), 1.0, true)
     if _mark_time > 0.0:
         var mark_rot := anim_time * 2.4
         for index in range(3):
             var start := mark_rot + TAU * float(index) / 3.0
-            draw_arc(Vector2.ZERO, status_radius * 1.13, start, start + 0.6, 10, Color(0.55, 0.85, 1.0, 0.62), 2.0, true)
+            draw_arc(Vector2.ZERO, status_radius * 1.13, start, start + 0.6, 10, Color(0.44, 0.66, 0.78, 0.62), 2.0, true)
     if has_slow():
-        draw_arc(Vector2.ZERO, status_radius, 0.0, TAU, 24, Color(0.35, 0.9, 1.0, 0.55), 1.5, true)
+        draw_arc(Vector2.ZERO, status_radius, 0.0, TAU, 24, Color(0.40, 0.70, 0.80, 0.55), 1.5, true)
     if is_stunned():
         draw_arc(Vector2.ZERO, status_radius * 1.18, 0.0, TAU, 24, Color(1.0, 0.95, 0.4, 0.85), 2.0, true)
         for index in range(3):

@@ -7,6 +7,7 @@ const BURST_SCRIPT := preload("res://scripts/fx_burst.gd")
 const COMBAT_FX := preload("res://scripts/combat_fx.gd")
 const MAX_DAMAGE_LABELS := 36
 const MAX_COMBAT_FX := 90
+const MAX_FX_BURSTS := 24
 
 func shake(strength := 6.0, duration := 0.15) -> void:
     shake_requested.emit(strength, duration)
@@ -65,7 +66,7 @@ func damage_number(global_position: Vector2, amount: int, color := Color.WHITE, 
     label.add_theme_font_override("font", UI.bold_font())
     label.add_theme_font_size_override("font_size", font_size)
     label.add_theme_color_override("font_color", color)
-    label.add_theme_color_override("font_outline_color", Color(0.01, 0.02, 0.03, 0.96))
+    label.add_theme_color_override("font_outline_color", Color(0.039, 0.078, 0.094, 0.96))
     label.add_theme_constant_override("outline_size", 5 if crit else 3)
     label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
     label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -91,6 +92,10 @@ func damage_number(global_position: Vector2, amount: int, color := Color.WHITE, 
 func burst(global_position: Vector2, color: Color, count := 8) -> void:
     var scene = get_tree().current_scene
     if scene == null:
+        return
+    # 护栏：fx_burst 是唯一没有并发上限的特效通道（敌人死亡、玩家走尘、拾币都会调），
+    # 与 MAX_COMBAT_FX / MAX_DAMAGE_LABELS 对齐给一个硬上限。
+    if get_tree().get_nodes_in_group("fx_burst").size() >= MAX_FX_BURSTS:
         return
     var burst_node = BURST_SCRIPT.new()
     scene.add_child(burst_node)

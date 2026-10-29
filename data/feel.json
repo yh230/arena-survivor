@@ -1,0 +1,24 @@
+{
+  "hitstop": {
+    "enabled": true,
+    "scale": 0.08,
+    "grenade_blast_ms": 45.0,
+    "hammer_hit_ms": 25.0,
+    "player_hit_ms": 30.0,
+    "kill_ms": 15.0,
+    "min_interval_ms": 120.0,
+    "budget_window_ms": 1000.0,
+    "budget_max_ms": 90.0
+  },
+  "audio": {
+    "pitch_jitter": 0.08
+  },
+  "blast": {
+    "layer_min_hits": 3,
+    "layer_ring_scale": 1.35,
+    "layer_ring_life": 0.95,
+    "layer_ring_width": 1.6,
+    "zoom_pulse": 0.02,
+    "zoom_pulse_ms": 120.0
+  }
+}

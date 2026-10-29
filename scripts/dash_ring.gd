@@ -16,8 +16,8 @@ func _draw() -> void:
     var center := size * 0.5
     var radius := minf(size.x, size.y) * 0.5 - 3.0
     var now := float(Time.get_ticks_msec()) * 0.001
-    draw_circle(center, radius, Color(0.03, 0.07, 0.08, 0.94))
-    draw_circle(center, radius - 9.0, Color(0.05, 0.11, 0.12, 0.82))
+    draw_circle(center, radius, Color(0.039, 0.078, 0.094, 0.94))
+    draw_circle(center, radius - 9.0, Color(0.067, 0.118, 0.141, 0.82))
     draw_arc(center, radius, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.58), 1.5, true)
     draw_arc(center, radius - 9.0, 0.0, TAU, 64, Color(UI.BRASS.r, UI.BRASS.g, UI.BRASS.b, 0.18), 1.0, true)
     for index in range(12):

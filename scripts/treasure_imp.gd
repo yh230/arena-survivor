@@ -5,6 +5,9 @@ extends "res://scripts/enemy_base.gd"
 var wander_direction := Vector2.RIGHT
 var wander_timer := 0.0
 
+# 性能：_draw 只有状态环与血条（均静态），无需每物理帧重绘
+var _was_status_visual := false
+
 func _ready() -> void:
     super._ready()
     add_to_group("treasure")
@@ -74,7 +77,10 @@ func _physics_process(delta: float) -> void:
         velocity = wander_direction * move_speed * speed_multiplier()
         move_and_slide()
         _clamp_to_arena()
-    queue_redraw()
+    var status_visual := _mark_time > 0.0 or has_slow() or is_stunned()
+    if status_visual or _was_status_visual:
+        queue_redraw()
+    _was_status_visual = status_visual
 
 func _clamp_to_arena() -> void:
     var view_size := get_viewport_rect().size

@@ -1,26 +1,30 @@
 class_name ForgeUI
 extends RefCounted
 
-const INK := Color("#071012")
-const PANEL := Color("#0d1b1d")
-const PANEL_2 := Color("#122629")
-const PANEL_3 := Color("#183235")
-const BRASS := Color("#d8b56b")
-const BRASS_LIGHT := Color("#f1d99b")
-const TEAL := Color("#45d6c2")
-const TEAL_DIM := Color("#2a8f86")
-const RED := Color("#e05a4f")
-const TEXT := Color("#eaf4f1")
-const MUTED := Color("#8fa8a6")
-const LINE := Color(0.847, 0.71, 0.42, 0.34)
-const DARK_LINE := Color(0.15, 0.23, 0.24, 1.0)
+## 青绿机关 · 色板
+## 取自矿物重彩（石青、石绿、泥金、朱砂）压深黛底，替代原「霓虹青 + 黄铜」的赛博仪表盘调性。
+const INK := Color("#0a1418")          ## 墨底
+const PANEL := Color("#152528")        ## 面板
+const PANEL_2 := Color("#1c3038")      ## 面板（亮）
+const PANEL_3 := Color("#244049")      ## 面板（更亮）
+const BRASS := Color("#c9a227")        ## 泥金
+const BRASS_LIGHT := Color("#ecd689")  ## 淡金
+const TEAL := Color("#5aac86")         ## 石绿（主高亮）
+const TEAL_DIM := Color("#3b7a5c")     ## 深石绿
+const AZURE := Color("#4687a8")        ## 石青（次高亮）
+const AZURE_DIM := Color("#2c566b")
+const RED := Color("#c84a3c")          ## 朱砂
+const TEXT := Color("#e8e3d5")         ## 蛤白
+const MUTED := Color("#8fa3a8")        ## 灰青
+const LINE := Color(0.788, 0.635, 0.153, 0.40)   ## 金线（泥金亮度低于原黄铜，alpha 相应上调）
+const DARK_LINE := Color(0.14, 0.24, 0.27, 1.0)
 const ICON_GLYPHS := ["炮", "刃", "链", "穿", "锤", "毒", "磁", "靴", "火", "猫", "砧", "翠"]
 const QUALITY_COLORS := [
-    Color.WHITE,
-    Color("#a8b3b0"),
-    Color("#5ab0ff"),
-    Color("#c084fc"),
-    Color("#f0b94a"),
+    Color("#cfc9bb"),   ## 白 · 宣纸
+    Color("#8fa3a8"),   ## 普通 · 灰青
+    Color("#4f8fa8"),   ## 稀有 · 石青
+    Color("#8a6fa8"),   ## 史诗 · 青莲
+    Color("#e0b445"),   ## 传说 · 泥金
 ]
 const QUALITY_NAMES := ["", "普通", "稀有", "史诗", "传说"]
 const SEALS := {
@@ -55,9 +59,11 @@ static func regular_font() -> SystemFont:
 static func bold_font() -> SystemFont:
     if _bold_font == null:
         _bold_font = SystemFont.new()
+        ## 标题与数字改用宋体系（衬线），是「东方匠造」调性的主要来源之一。
+        ## 正文仍走 regular_font 的无衬线，保证 9–12px 小字清晰。
         _bold_font.font_names = PackedStringArray([
-            "Microsoft YaHei", "Noto Sans CJK SC", "PingFang SC",
-            "WenQuanYi Micro Hei", "sans-serif",
+            "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC",
+            "STSong", "SimSun", "Microsoft YaHei", "serif",
         ])
         _bold_font.font_weight = 700
         _bold_font.allow_system_fallback = true
@@ -143,7 +149,7 @@ static func make_coin(diameter := 16.0) -> Panel:
     coin.custom_minimum_size = Vector2(diameter, diameter)
     coin.size = Vector2(diameter, diameter)
     coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-    var style := panel_style(Color("#f0b94a"), Color("#fff1c8"), int(diameter * 0.5), 1)
+    var style := panel_style(Color("#e0b445"), Color("#f5e2a8"), int(diameter * 0.5), 1)
     coin.add_theme_stylebox_override("panel", style)
     return coin
 
