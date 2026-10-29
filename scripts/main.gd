@@ -2305,9 +2305,11 @@ func _run_smoke_test() -> void:
         _fail_test("game over retry button missing")
         return
 
-    if Audio.get_sound_names().size() < 17:
-        _fail_test("audio sounds missing")
-        return
+    var required_sounds := ["hit", "enemy_die", "hurt", "wave_start", "upgrade", "boss_spawn", "boss_die", "turret", "chain", "pierce", "enemy_shot", "explode", "orbiter"]
+    for sound_name in required_sounds:
+        if not Audio.get_sound_names().has(sound_name):
+            _fail_test("audio sounds missing: " + sound_name)
+            return
     DirAccess.remove_absolute(ProjectSettings.globalize_path(save_path))
     print("SMOKE_TEST_PASS input=%s stage_select=true shop=true merge=true coins=true enemies=true boss8=true stage_clear=true endless=true build=%s" % [input_mode, weapon_manager.get_build_signature()])
     get_tree().paused = false
